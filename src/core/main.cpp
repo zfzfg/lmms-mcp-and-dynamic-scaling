@@ -181,6 +181,9 @@ void printHelp()
 		"  -c, --config <configfile>      Get the configuration from <configfile>\n"
 		"  -h, --help                     Show this usage information and exit.\n"
 		"  -v, --version                  Show version information and exit.\n"
+		"      --mcp                      Enable AI/MCP control service (enabled by default)\n"
+		"      --no-mcp                   Disable AI/MCP control service\n"
+		"      --mcp-connection-file <f>  Specify custom connection file for AI/MCP\n"
 		"\nOptions if no action is given:\n"
 		"      --geometry <geometry>      Specify the size and position of\n"
 		"          the main window\n"
@@ -257,7 +260,11 @@ int main( int argc, char * * argv )
 	bool allowRoot = false;
 	bool renderLoop = false;
 	bool renderTracks = false;
+#ifdef LMMS_HAVE_MCP
+	bool mcpEnabled = true;
+#else
 	bool mcpEnabled = false;
+#endif
 	QString mcpConnectionFile;
 	QString renderReportPath;
 	QString fileToLoad, fileToImport, renderOut, profilerOutputFile, configFile;
@@ -293,6 +300,10 @@ int main( int argc, char * * argv )
 		else if (arg == "--mcp")
 		{
 			mcpEnabled = true;
+		}
+		else if (arg == "--no-mcp")
+		{
+			mcpEnabled = false;
 		}
 		else if (arg == "--geometry" || arg == "-geometry")
 		{
@@ -705,10 +716,14 @@ int main( int argc, char * * argv )
 	ConfigManager::inst()->loadConfigFile(configFile);
 
 #ifdef LMMS_HAVE_MCP
-	if (mcpEnabled)
+	if (mcpEnabled && !coreOnly)
 	{
 		ai::AiControlService::instance()->startService(mcpConnectionFile);
 		ai::AiControlService::instance()->setReady(true);
+	}
+	else if (!mcpEnabled)
+	{
+		ai::AiControlService::instance()->stopService();
 	}
 #endif
 

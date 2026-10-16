@@ -10,7 +10,7 @@ The Model Context Protocol (MCP) companion server provides a standard stdio inte
 
 ## Setup & Running
 
-1. Enable "KI-Steuerung / MCP" in LMMS settings or run LMMS with `--mcp`.
+1. Run LMMS (MCP is enabled by default in this fork; disable via `--no-mcp` if desired).
 2. Connect your MCP host using the generated connection file:
    ```json
    {

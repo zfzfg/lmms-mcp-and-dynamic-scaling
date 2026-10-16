@@ -4,7 +4,7 @@
 Der LMMS-Begleitprozess `lmms-mcp` kommuniziert über Standard-I/O (`stdio`) mit dem jeweiligen MCP-Host.
 
 ## 1. Voraussetzungen
-- Ein laufendes LMMS mit aktivierter Option „KI-Steuerung / MCP“.
+- Ein laufendes LMMS (in diesem Fork auf Benutzeranforderung standardmäßig mit aktiver KI-Steuerung / MCP; abschaltbar mit `--no-mcp`).
 - Die von LMMS automatisch generierte Verbindungsdatei (z.B. `%LOCALAPPDATA%\LMMS\mcp\connections\studio.json` unter Windows bzw. `~/.local/share/LMMS/mcp/connections/studio.json` unter Linux).
 
 ## 2. Konfigurationsbeispiele

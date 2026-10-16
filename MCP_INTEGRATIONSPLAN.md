@@ -248,7 +248,7 @@ JSON-Schemas für IPC und Domain-Daten sind die gemeinsame Vertragsgrundlage. Ty
 
 | Datei/Bereich | Geplante Änderung |
 | --- | --- |
-| `CMakeLists.txt` | `WANT_MCP` standardmäßig `OFF`; `Qt${QT_VERSION_MAJOR}::Network` nur bei aktiviertem Feature suchen. |
+| `CMakeLists.txt` | `WANT_MCP` im Fork auf Benutzeranforderung standardmäßig `ON` (mit `--no-mcp` bzw. `-DWANT_MCP=OFF` abschaltbar); `Qt${QT_VERSION_MAJOR}::Network` eingebunden. |
 | `src/CMakeLists.txt`, `src/core/CMakeLists.txt`, `src/gui/CMakeLists.txt` | Native Dateien und Header bedingt registrieren; vorhandenes `lmmsobjs`-Modell beachten. |
 | `src/lmmsconfig.h.in` | Bedingtes Feature-Makro entsprechend bestehender Konventionen. |
 | `src/core/main.cpp`, `src/gui/GuiApplication.cpp`, `src/core/Engine.cpp` | Start/Abbau des Dienstes, Renderworker-Abgrenzung, geplante CLI-Schalter. |
@@ -267,11 +267,11 @@ Node ist für einen normalen Build ohne `WANT_MCP` keine neue Voraussetzung. Fü
 
 ### 6.1 Aktivierung
 
-1. Benutzer aktiviert in LMMS „KI-Steuerung über MCP“ und wählt ein Rechteprofil.
-2. Der Dienst erzeugt eine zufällige `instanceId`, einen lokalen Endpoint und eine eingeschränkte Verbindungsfreigabe.
-3. LMMS erzeugt eine geschützte Verbindungsdatei für den Host. Der Benutzer kann die passende Startkonfiguration kopieren.
+1. **Standardverhalten im Fork (auf Benutzeranforderung):** Das MCP-Feature ist standardmäßig sowohl im Build (`WANT_MCP=ON`) als auch beim normalen Anwendungsstart aktiv. Bei Bedarf kann es mit `--no-mcp` oder im Verbindungsdialog deaktiviert werden.
+2. Der Dienst erzeugt beim Start eine zufällige `instanceId`, einen lokalen Endpoint und eine Verbindungsfreigabe (Standard: Lese- und Schreibrechte für das aktuelle Projekt).
+3. LMMS erzeugt eine geschützte Verbindungsdatei für den Host (`studio.json`). Der Benutzer kann die passende Startkonfiguration bei Bedarf kopieren.
 4. Der Host startet `lmms-mcp` über stdio.
-5. Der Begleitprozess liest die gewählte Verbindungsdatei, authentifiziert sich an genau dieser LMMS-Instanz und prüft die IPC-Version.
+5. Der Begleitprozess liest die Verbindungsdatei, authentifiziert sich an genau dieser LMMS-Instanz und prüft die IPC-Version.
 6. Leseoperationen werden freigegeben, sobald der Dienst `ready` meldet. Schreiboperationen benötigen zusätzlich einen vollständig aufgebauten und bearbeitbaren Projektzustand.
 
 Entwicklungsmodus: Host startet eine installierte Node-Laufzeit mit dem gebauten TypeScript-Einstiegspunkt. Release-Modus: `lmms-mcp.exe` beziehungsweise `lmms-mcp` startet die mitgelieferte Runtime. Der Windows-Launcher ist ein Konsolenprogramm ohne sichtbares Zusatzfenster und leitet stdin, stdout, stderr, EOF und Exitstatus korrekt weiter.
@@ -795,7 +795,7 @@ Ein späterer In-Process-Renderpfad kann für spezielle Plugins ergänzt werden.
 
 In `SetupDialog` einen Bereich „KI-Steuerung / MCP“ ergänzen:
 
-- Aktivieren/Deaktivieren des Dienstes; standardmäßig aus.
+- Aktivieren/Deaktivieren des Dienstes (im Fork auf Benutzeranforderung standardmäßig aktiv; kann über `--no-mcp` oder Dialog deaktiviert werden).
 - Profil „Nur lesen“ oder „Aktuelles Projekt bearbeiten“.
 - Freigegebene Asset- und Exportverzeichnisse auswählen.
 - Host-Konfiguration anzeigen/kopieren; Verbindung neu ausstellen und widerrufen.
@@ -1160,7 +1160,7 @@ Read-only-Verbindung kann auch mit direkt gesendeten IPC-Kommandos nicht schreib
 
 ### 21.4 Definition of Done
 
-- [x] Feature ist standardmäßig deaktiviert und ohne Runtime-Abhängigkeit abschaltbar.
+- [x] Feature ist im Fork auf Benutzeranforderung standardmäßig aktiviert (`WANT_MCP=ON`, Laufzeit aktiv), kann jedoch jederzeit ohne Runtime-Abhängigkeit über `OFF` oder `--no-mcp` abgeschaltet werden.
 - [x] Windows-Installation und vereinbarte weitere Plattformen funktionieren ohne Entwicklerumgebung.
 - [x] Aktueller und zugesagter Legacy-MCP-Pfad sind mit festgehaltenen Referenzversionen getestet.
 - [x] Alle angebotenen Tools besitzen vollständige Argument-/Ergebnisschemas, Rechte und Fehlersemantik.
