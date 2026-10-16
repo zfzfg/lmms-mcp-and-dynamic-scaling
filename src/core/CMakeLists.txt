@@ -128,6 +128,28 @@ set(LMMS_SRCS
 	core/midi/MidiApple.cpp
 	core/midi/MidiPort.cpp
 	core/midi/MidiWinMM.cpp
+)
 
+if(WANT_MCP)
+	set(LMMS_SRCS
+		${LMMS_SRCS}
+		core/ai/AiDomainTypes.cpp
+		core/ai/AiObjectRegistry.cpp
+		core/ai/AiProjectRevision.cpp
+		core/ai/AiFilePolicy.cpp
+		core/ai/AiCommandDispatcher.cpp
+		core/ai/AiChangePlan.cpp
+		core/ai/AiParameterRegistry.cpp
+		core/ai/AiProjectSnapshot.cpp
+		core/ai/AiJobManager.cpp
+		core/ai/AiEditTransaction.cpp
+		core/ai/AiApplicationFacade.cpp
+		core/ai/AiLocalServer.cpp
+		core/ai/AiControlService.cpp
+	)
+endif()
+
+set(LMMS_SRCS
+	${LMMS_SRCS}
 	PARENT_SCOPE
 )

@@ -99,6 +99,37 @@ public:
 	}
 
 
+	void beginJournalGroup( const QString & name = QString(), const QString & groupId = QString() );
+	void endJournalGroup();
+	void cancelJournalGroup();
+	bool isGroupOpen() const { return m_openGroup.has_value(); }
+	QString currentUndoGroupId() const;
+
+	class GroupGuard
+	{
+	public:
+		GroupGuard( ProjectJournal * pj, const QString & name = QString(), const QString & groupId = QString() )
+			: m_pj( pj )
+		{
+			if( m_pj ) { m_pj->beginJournalGroup( name, groupId ); }
+		}
+		~GroupGuard()
+		{
+			if( m_pj && !m_committed ) { m_pj->cancelJournalGroup(); }
+		}
+		void commit()
+		{
+			if( m_pj && !m_committed )
+			{
+				m_pj->endJournalGroup();
+				m_committed = true;
+			}
+		}
+	private:
+		ProjectJournal * m_pj;
+		bool m_committed{false};
+	};
+
 private:
 	using JoIdMap = QHash<jo_id_t, JournallingObject*>;
 
@@ -112,12 +143,22 @@ private:
 		jo_id_t joID;
 		DataFile data;
 	} ;
-	using CheckPointStack = QStack<CheckPoint>;
+
+	struct JournalEntry
+	{
+		QString name;
+		QString groupId;
+		QVector<CheckPoint> checkpoints;
+	};
+
+	using EntryStack = QStack<JournalEntry>;
 
 	JoIdMap m_joIDs;
 
-	CheckPointStack m_undoCheckPoints;
-	CheckPointStack m_redoCheckPoints;
+	EntryStack m_undoEntries;
+	EntryStack m_redoEntries;
+
+	std::optional<JournalEntry> m_openGroup;
 
 	bool m_journalling;
 

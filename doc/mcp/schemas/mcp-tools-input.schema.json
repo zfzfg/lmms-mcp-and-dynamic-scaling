@@ -1,0 +1,232 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LmmsMcpToolsInput",
+  "description": "Schemas for all MCP Tool input parameters in LMMS",
+  "definitions": {
+    "GetStatusInput": {
+      "type": "object",
+      "properties": {}
+    },
+    "GetProjectInput": {
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" }
+      }
+    },
+    "ListTracksInput": {
+      "type": "object",
+      "properties": {
+        "container": { "type": "string", "enum": ["song", "pattern_store"] },
+        "cursor": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
+      }
+    },
+    "ListClipsInput": {
+      "type": "object",
+      "required": ["trackId"],
+      "properties": {
+        "trackId": { "type": "string" },
+        "startTick": { "type": "integer", "minimum": 0 },
+        "endTick": { "type": "integer", "minimum": 0 },
+        "cursor": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
+      }
+    },
+    "GetNotesInput": {
+      "type": "object",
+      "required": ["clipId"],
+      "properties": {
+        "clipId": { "type": "string" },
+        "startTick": { "type": "integer", "minimum": 0 },
+        "endTick": { "type": "integer", "minimum": 0 },
+        "cursor": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
+      }
+    },
+    "ListParametersInput": {
+      "type": "object",
+      "required": ["ownerId"],
+      "properties": {
+        "ownerId": { "type": "string" },
+        "cursor": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
+      }
+    },
+    "ListInstrumentsInput": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "cursor": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
+      }
+    },
+    "GetMixerInput": {
+      "type": "object",
+      "properties": {
+        "channelIndex": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "GetOperationInput": {
+      "type": "object",
+      "required": ["operationKey"],
+      "properties": {
+        "operationKey": { "type": "string" }
+      }
+    },
+    "GetJobInput": {
+      "type": "object",
+      "required": ["jobId"],
+      "properties": {
+        "jobId": { "type": "string" }
+      }
+    },
+    "NoteChange": {
+      "type": "object",
+      "required": ["positionTicks", "lengthTicks", "midiKey"],
+      "properties": {
+        "noteRef": { "type": "string" },
+        "positionTicks": { "type": "integer", "minimum": 0 },
+        "lengthTicks": { "type": "integer", "minimum": 1 },
+        "midiKey": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "volumePercent": { "type": "integer", "minimum": 0, "maximum": 200, "default": 100 },
+        "pan": { "type": "integer", "minimum": -100, "maximum": 100, "default": 0 },
+        "noteType": { "type": "string", "enum": ["regular", "step"], "default": "regular" }
+      }
+    },
+    "ChangeItem": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "set_tempo",
+            "rename_track",
+            "set_track_mute",
+            "set_parameter",
+            "create_midi_clip",
+            "add_notes",
+            "update_notes",
+            "remove_notes",
+            "transpose_notes",
+            "move_clip",
+            "resize_clip",
+            "duplicate_clip",
+            "delete_clip",
+            "delete_track",
+            "set_pattern_steps",
+            "assign_pattern",
+            "set_automation_points",
+            "create_mixer_channel",
+            "set_mixer_send",
+            "assign_mixer_channel"
+          ]
+        },
+        "bpm": { "type": "integer", "minimum": 10, "maximum": 999 },
+        "trackId": { "type": "string" },
+        "newName": { "type": "string" },
+        "muted": { "type": "boolean" },
+        "parameterId": { "type": "string" },
+        "value": { "type": "number" },
+        "clientRef": { "type": "string" },
+        "positionTicks": { "type": "integer", "minimum": 0 },
+        "lengthTicks": { "type": "integer", "minimum": 1 },
+        "clip": {
+          "type": "object",
+          "properties": {
+            "clipId": { "type": "string" },
+            "clientRef": { "type": "string" }
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/NoteChange" }
+        },
+        "noteRefs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "semitones": { "type": "integer", "minimum": -127, "maximum": 127 }
+      }
+    },
+    "PreviewChangesInput": {
+      "type": "object",
+      "required": ["projectId", "expectedRevision", "changes"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "expectedRevision": { "type": "integer", "minimum": 0 },
+        "changes": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/definitions/ChangeItem" }
+        }
+      }
+    },
+    "ApplyChangesInput": {
+      "type": "object",
+      "required": ["projectId", "expectedRevision", "planId", "operationKey"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "expectedRevision": { "type": "integer", "minimum": 0 },
+        "planId": { "type": "string" },
+        "operationKey": { "type": "string" }
+      }
+    },
+    "SetTransportInput": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": { "type": "string", "enum": ["play", "pause", "stop", "seek"] },
+        "tickPosition": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "UndoRedoInput": {
+      "type": "object",
+      "required": ["expectedRevision"],
+      "properties": {
+        "expectedRevision": { "type": "integer", "minimum": 0 },
+        "undoGroupId": { "type": "string" }
+      }
+    },
+    "CreateInstrumentTrackInput": {
+      "type": "object",
+      "required": ["pluginKey"],
+      "properties": {
+        "pluginKey": { "type": "string" },
+        "trackName": { "type": "string" }
+      }
+    },
+    "LoadAssetInput": {
+      "type": "object",
+      "required": ["assetId"],
+      "properties": {
+        "assetId": { "type": "string" },
+        "targetTrackId": { "type": "string" }
+      }
+    },
+    "SaveProjectCopyInput": {
+      "type": "object",
+      "required": ["fileName"],
+      "properties": {
+        "fileName": { "type": "string" }
+      }
+    },
+    "StartRenderInput": {
+      "type": "object",
+      "required": ["outputFileName"],
+      "properties": {
+        "outputFileName": { "type": "string" },
+        "format": { "type": "string", "enum": ["wav", "ogg", "mp3"], "default": "wav" },
+        "sampleRate": { "type": "integer", "enum": [44100, 48000, 88200, 96000], "default": 44100 },
+        "bitDepth": { "type": "integer", "enum": [16, 24, 32], "default": 16 }
+      }
+    },
+    "CancelJobInput": {
+      "type": "object",
+      "required": ["jobId"],
+      "properties": {
+        "jobId": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LmmsMcpToolsOutput",
+  "description": "Schemas for all MCP Tool outputs in LMMS",
+  "definitions": {
+    "StatusOutput": {
+      "type": "object",
+      "required": ["ready", "instanceId", "version", "permissions"],
+      "properties": {
+        "ready": { "type": "boolean" },
+        "instanceId": { "type": "string" },
+        "version": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "busy": { "type": "boolean" },
+        "capabilities": { "type": "object" }
+      }
+    },
+    "ProjectOutput": {
+      "type": "object",
+      "required": ["projectId", "projectRevision", "name", "tempoBpm", "timeSignature"],
+      "properties": {
+        "projectId": { "type": "string" },
+        "projectRevision": { "type": "integer" },
+        "name": { "type": "string" },
+        "modified": { "type": "boolean" },
+        "tempoBpm": { "type": "integer" },
+        "timeSignature": {
+          "type": "object",
+          "properties": {
+            "numerator": { "type": "integer" },
+            "denominator": { "type": "integer" }
+          }
+        },
+        "ticksPerQuarter": { "type": "integer" },
+        "ticksPerBar": { "type": "integer" },
+        "lengthTicks": { "type": "integer" },
+        "playMode": { "type": "string" },
+        "playing": { "type": "boolean" },
+        "capabilities": { "type": "object" }
+      }
+    },
+    "TrackSummary": {
+      "type": "object",
+      "required": ["trackId", "name", "type", "container"],
+      "properties": {
+        "trackId": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "container": { "type": "string", "enum": ["song", "pattern_store"] },
+        "muted": { "type": "boolean" },
+        "solo": { "type": "boolean" },
+        "volume": { "type": "number" },
+        "panning": { "type": "number" },
+        "clipCount": { "type": "integer" },
+        "instrumentKey": { "type": "string" },
+        "mixerChannel": { "type": "integer" }
+      }
+    },
+    "ClipSummary": {
+      "type": "object",
+      "required": ["clipId", "trackId", "type", "positionTicks", "lengthTicks"],
+      "properties": {
+        "clipId": { "type": "string" },
+        "trackId": { "type": "string" },
+        "type": { "type": "string" },
+        "name": { "type": "string" },
+        "positionTicks": { "type": "integer" },
+        "lengthTicks": { "type": "integer" },
+        "muted": { "type": "boolean" },
+        "noteCount": { "type": "integer" }
+      }
+    },
+    "NoteData": {
+      "type": "object",
+      "required": ["noteRef", "positionTicks", "lengthTicks", "midiKey"],
+      "properties": {
+        "noteRef": { "type": "string" },
+        "positionTicks": { "type": "integer" },
+        "lengthTicks": { "type": "integer" },
+        "midiKey": { "type": "integer" },
+        "volumePercent": { "type": "integer" },
+        "pan": { "type": "integer" },
+        "noteType": { "type": "string" },
+        "hasDetuning": { "type": "boolean" }
+      }
+    },
+    "NotesOutput": {
+      "type": "object",
+      "required": ["clipId", "clipRevision", "notes"],
+      "properties": {
+        "clipId": { "type": "string" },
+        "clipRevision": { "type": "integer" },
+        "notes": { "type": "array", "items": { "$ref": "#/definitions/NoteData" } },
+        "nextCursor": { "type": "string" }
+      }
+    },
+    "PreviewOutput": {
+      "type": "object",
+      "required": ["planId", "planHash", "expiresAt", "summary", "operationsCount"],
+      "properties": {
+        "planId": { "type": "string" },
+        "planHash": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "summary": { "type": "string" },
+        "operationsCount": { "type": "integer" },
+        "expectedRevision": { "type": "integer" },
+        "affectedObjects": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ApplyOutput": {
+      "type": "object",
+      "required": ["status", "newRevision", "undoGroupId"],
+      "properties": {
+        "status": { "type": "string", "enum": ["committed", "rejected"] },
+        "newRevision": { "type": "integer" },
+        "undoGroupId": { "type": "string" },
+        "createdObjects": { "type": "object" },
+        "addedNotes": { "type": "integer" }
+      }
+    },
+    "JobOutput": {
+      "type": "object",
+      "required": ["jobId", "type", "state"],
+      "properties": {
+        "jobId": { "type": "string" },
+        "type": { "type": "string" },
+        "state": { "type": "string", "enum": ["queued", "preparing_snapshot", "running", "validating", "succeeded", "failed", "cancelled"] },
+        "progress": { "type": "number", "minimum": 0, "maximum": 100 },
+        "error": { "type": "string" },
+        "artifactId": { "type": "string" },
+        "artifactPath": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LmmsMcpResources",
+  "description": "Schemas for LMMS MCP Resource URIs and contents",
+  "definitions": {
+    "ProjectSummaryResource": {
+      "type": "object",
+      "required": ["uri", "mimeType", "text"],
+      "properties": {
+        "uri": { "type": "string", "pattern": "^lmms://instances/[^/]+/projects/[^/]+/summary$" },
+        "mimeType": { "type": "string", "enum": ["application/json"] },
+        "text": { "type": "string" }
+      }
+    },
+    "TrackResource": {
+      "type": "object",
+      "required": ["uri", "mimeType", "text"],
+      "properties": {
+        "uri": { "type": "string", "pattern": "^lmms://instances/[^/]+/projects/[^/]+/tracks/[^/]+$" },
+        "mimeType": { "type": "string", "enum": ["application/json"] },
+        "text": { "type": "string" }
+      }
+    },
+    "ClipResource": {
+      "type": "object",
+      "required": ["uri", "mimeType", "text"],
+      "properties": {
+        "uri": { "type": "string", "pattern": "^lmms://instances/[^/]+/projects/[^/]+/clips/[^/]+/summary$" },
+        "mimeType": { "type": "string", "enum": ["application/json"] },
+        "text": { "type": "string" }
+      }
+    },
+    "CapabilitiesResource": {
+      "type": "object",
+      "required": ["uri", "mimeType", "text"],
+      "properties": {
+        "uri": { "type": "string", "pattern": "^lmms://instances/[^/]+/capabilities$" },
+        "mimeType": { "type": "string", "enum": ["application/json"] },
+        "text": { "type": "string" }
+      }
+    },
+    "ArtifactResource": {
+      "type": "object",
+      "required": ["uri", "mimeType"],
+      "properties": {
+        "uri": { "type": "string", "pattern": "^lmms://instances/[^/]+/artifacts/[^/]+$" },
+        "mimeType": { "type": "string" },
+        "blob": { "type": "string" }
+      }
+    }
+  }
+}

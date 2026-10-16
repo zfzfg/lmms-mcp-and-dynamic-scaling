@@ -14,6 +14,18 @@ set(LMMS_TESTS
 	src/tracks/AutomationTrackTest.cpp
 )
 
+if(WANT_MCP)
+	list(APPEND LMMS_TESTS
+		src/ai/AiObjectRegistryTest.cpp
+		src/ai/AiProjectRevisionTest.cpp
+		src/ai/AiCommandDispatcherTest.cpp
+		src/ai/AiEditTransactionTest.cpp
+		src/ai/AiFilePolicyTest.cpp
+		src/ai/AiJobManagerTest.cpp
+		src/ai/AiDomainContractTest.cpp
+	)
+endif()
+
 foreach(LMMS_TEST_SRC IN LISTS LMMS_TESTS)
 	# TODO CMake 3.20: Use cmake_path
 	get_filename_component(LMMS_TEST_NAME ${LMMS_TEST_SRC} NAME_WE)

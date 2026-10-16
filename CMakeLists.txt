@@ -111,6 +111,7 @@ OPTION(BUNDLE_QT_TRANSLATIONS	"Install Qt translation files for LMMS" OFF)
 option(WANT_DEBUG_CPACK "Show detailed logs for packaging commands" OFF)
 option(WANT_CPACK_TARBALL "Request CPack to create a tarball instead of an installer" OFF)
 option(WANT_QT6 "Build with experimental Qt6 support" OFF)
+option(WANT_MCP "Enable AI/MCP control service" OFF)
 
 
 # Set the target microarchitecture
@@ -294,6 +295,17 @@ set(QT_LIBRARIES
 	Qt${QT_VERSION_MAJOR}::Xml
 	Qt${QT_VERSION_MAJOR}::Svg
 )
+
+if(WANT_MCP)
+	find_package(Qt${QT_VERSION_MAJOR} ${LMMS_QT_MIN_VERSION} COMPONENTS Network REQUIRED)
+	include_directories(SYSTEM ${Qt${QT_VERSION_MAJOR}Network_INCLUDE_DIRS})
+	list(APPEND QT_LIBRARIES Qt${QT_VERSION_MAJOR}::Network)
+	SET(LMMS_HAVE_MCP TRUE)
+	set(STATUS_MCP "Enabled")
+else()
+	SET(LMMS_HAVE_MCP FALSE)
+	set(STATUS_MCP "Disabled")
+endif()
 
 IF(LMMS_BUILD_LINUX AND WANT_VST AND NOT WANT_QT6)
     FIND_PACKAGE(Qt5 COMPONENTS X11Extras REQUIRED)
@@ -943,6 +955,7 @@ MESSAGE(
 "* Profile using GNU profiler        : ${STATUS_GPROF}\n"
 "* Debug assertions                  : ${STATUS_ASSERTIONS}\n"
 "* Experimental Qt6 support          : ${STATUS_QT6}\n"
+"* AI / MCP control service          : ${STATUS_MCP}\n"
 )
 
 MESSAGE(

@@ -37,6 +37,10 @@
 #include "BandLimitedWave.h"
 #include "Oscillator.h"
 
+#ifdef LMMS_HAVE_MCP
+#include "AiControlService.h"
+#endif
+
 namespace lmms
 {
 
@@ -87,6 +91,13 @@ void Engine::init( bool renderOnly )
 
 	emit engine->initProgress(tr("Launching audio engine threads"));
 	s_audioEngine->startProcessing();
+
+#ifdef LMMS_HAVE_MCP
+	if (!renderOnly)
+	{
+		ai::AiControlService::instance()->startService();
+	}
+#endif
 }
 
 
@@ -94,6 +105,10 @@ void Engine::init( bool renderOnly )
 
 void Engine::destroy()
 {
+#ifdef LMMS_HAVE_MCP
+	ai::AiControlService::instance()->stopService();
+#endif
+
 	s_projectJournal->stopAllJournalling();
 	s_audioEngine->stopProcessing();
 

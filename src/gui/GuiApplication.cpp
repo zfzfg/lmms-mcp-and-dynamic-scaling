@@ -40,6 +40,10 @@
 #include "ProjectNotes.h"
 #include "SongEditor.h"
 
+#ifdef LMMS_HAVE_MCP
+#include "AiControlService.h"
+#endif
+
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
@@ -194,6 +198,10 @@ GuiApplication::GuiApplication()
 
 	splashScreen.finish(m_mainWindow);
 	m_mainWindow->finalize();
+
+#ifdef LMMS_HAVE_MCP
+	ai::AiControlService::instance()->setReady(true);
+#endif
 
 	m_loadingProgressLabel = nullptr;
 }

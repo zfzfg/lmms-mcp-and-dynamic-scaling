@@ -43,8 +43,9 @@ const int ProjectJournal::MAX_UNDO_STATES = 100; // TODO: make this configurable
 
 ProjectJournal::ProjectJournal() :
 	m_joIDs(),
-	m_undoCheckPoints(),
-	m_redoCheckPoints(),
+	m_undoEntries(),
+	m_redoEntries(),
+	m_openGroup( std::nullopt ),
 	m_journalling( false )
 {
 }
@@ -52,27 +53,99 @@ ProjectJournal::ProjectJournal() :
 
 
 
+void ProjectJournal::beginJournalGroup( const QString & name, const QString & groupId )
+{
+	JournalEntry entry;
+	entry.name = name;
+	entry.groupId = groupId.isEmpty() ? QString("undo_%1").arg(fastRand(), 0, 16) : groupId;
+	m_openGroup = entry;
+}
+
+void ProjectJournal::endJournalGroup()
+{
+	if( !m_openGroup.has_value() )
+	{
+		return;
+	}
+
+	JournalEntry entry = std::move( m_openGroup.value() );
+	m_openGroup = std::nullopt;
+
+	if( !entry.checkpoints.isEmpty() )
+	{
+		m_redoEntries.clear();
+		m_undoEntries.push( std::move( entry ) );
+		if( m_undoEntries.size() > MAX_UNDO_STATES )
+		{
+			m_undoEntries.remove( 0, m_undoEntries.size() - MAX_UNDO_STATES );
+		}
+	}
+}
+
+void ProjectJournal::cancelJournalGroup()
+{
+	m_openGroup = std::nullopt;
+}
+
+QString ProjectJournal::currentUndoGroupId() const
+{
+	if( !m_undoEntries.isEmpty() )
+	{
+		return m_undoEntries.top().groupId;
+	}
+	return QString();
+}
+
 void ProjectJournal::undo()
 {
-	while( !m_undoCheckPoints.isEmpty() )
+	while( !m_undoEntries.isEmpty() )
 	{
-		CheckPoint c = m_undoCheckPoints.pop();
-		JournallingObject *jo = m_joIDs[c.joID];
+		JournalEntry entry = m_undoEntries.pop();
+		JournalEntry redoEntry;
+		redoEntry.name = entry.name;
+		redoEntry.groupId = entry.groupId;
 
-		if( jo )
+		bool anyRestored = false;
+		bool hasAutomationClips = false;
+
+		// Save current states of all objects in the group for redo
+		for( const CheckPoint & c : entry.checkpoints )
 		{
-			DataFile curState( DataFile::Type::JournalData );
-			jo->saveState( curState, curState.content() );
-			m_redoCheckPoints.push( CheckPoint( c.joID, curState ) );
+			JournallingObject * jo = m_joIDs.value( c.joID, nullptr );
+			if( jo )
+			{
+				DataFile curState( DataFile::Type::JournalData );
+				jo->saveState( curState, curState.content() );
+				redoEntry.checkpoints.append( CheckPoint( c.joID, curState ) );
+			}
+		}
 
-			bool prev = isJournalling();
-			setJournalling( false );
-			jo->restoreState( c.data.content().firstChildElement() );
-			setJournalling( prev );
+		bool prev = isJournalling();
+		setJournalling( false );
+
+		// Restore checkpoints in reverse order
+		for( int i = entry.checkpoints.size() - 1; i >= 0; --i )
+		{
+			const CheckPoint & c = entry.checkpoints.at( i );
+			JournallingObject * jo = m_joIDs.value( c.joID, nullptr );
+			if( jo )
+			{
+				jo->restoreState( c.data.content().firstChildElement() );
+				anyRestored = true;
+				if( !c.data.content().elementsByTagName( "automationclip" ).isEmpty() )
+				{
+					hasAutomationClips = true;
+				}
+			}
+		}
+
+		setJournalling( prev );
+
+		if( anyRestored )
+		{
+			m_redoEntries.push( std::move( redoEntry ) );
 			Engine::getSong()->setModified();
-
-			// loading AutomationClip connections correctly
-			if (!c.data.content().elementsByTagName("automationclip").isEmpty())
+			if( hasAutomationClips )
 			{
 				AutomationClip::resolveAllIDs();
 			}
@@ -85,22 +158,56 @@ void ProjectJournal::undo()
 
 void ProjectJournal::redo()
 {
-	while( !m_redoCheckPoints.isEmpty() )
+	while( !m_redoEntries.isEmpty() )
 	{
-		CheckPoint c = m_redoCheckPoints.pop();
-		JournallingObject *jo = m_joIDs[c.joID];
+		JournalEntry entry = m_redoEntries.pop();
+		JournalEntry undoEntry;
+		undoEntry.name = entry.name;
+		undoEntry.groupId = entry.groupId;
 
-		if( jo )
+		bool anyRestored = false;
+		bool hasAutomationClips = false;
+
+		// Save current states for undo
+		for( const CheckPoint & c : entry.checkpoints )
 		{
-			DataFile curState( DataFile::Type::JournalData );
-			jo->saveState( curState, curState.content() );
-			m_undoCheckPoints.push( CheckPoint( c.joID, curState ) );
+			JournallingObject * jo = m_joIDs.value( c.joID, nullptr );
+			if( jo )
+			{
+				DataFile curState( DataFile::Type::JournalData );
+				jo->saveState( curState, curState.content() );
+				undoEntry.checkpoints.append( CheckPoint( c.joID, curState ) );
+			}
+		}
 
-			bool prev = isJournalling();
-			setJournalling( false );
-			jo->restoreState( c.data.content().firstChildElement() );
-			setJournalling( prev );
+		bool prev = isJournalling();
+		setJournalling( false );
+
+		// Restore checkpoints in forward order
+		for( const CheckPoint & c : entry.checkpoints )
+		{
+			JournallingObject * jo = m_joIDs.value( c.joID, nullptr );
+			if( jo )
+			{
+				jo->restoreState( c.data.content().firstChildElement() );
+				anyRestored = true;
+				if( !c.data.content().elementsByTagName( "automationclip" ).isEmpty() )
+				{
+					hasAutomationClips = true;
+				}
+			}
+		}
+
+		setJournalling( prev );
+
+		if( anyRestored )
+		{
+			m_undoEntries.push( std::move( undoEntry ) );
 			Engine::getSong()->setModified();
+			if( hasAutomationClips )
+			{
+				AutomationClip::resolveAllIDs();
+			}
 			break;
 		}
 	}
@@ -108,29 +215,47 @@ void ProjectJournal::redo()
 
 bool ProjectJournal::canUndo() const
 {
-	return !m_undoCheckPoints.isEmpty();
+	return !m_undoEntries.isEmpty();
 }
 
 bool ProjectJournal::canRedo() const
 {
-	return !m_redoCheckPoints.isEmpty();
+	return !m_redoEntries.isEmpty();
 }
 
 
 
 void ProjectJournal::addJournalCheckPoint( JournallingObject *jo )
 {
-	if( isJournalling() )
+	if( isJournalling() && jo )
 	{
-		m_redoCheckPoints.clear();
-
 		DataFile dataFile( DataFile::Type::JournalData );
 		jo->saveState( dataFile, dataFile.content() );
+		CheckPoint cp( jo->id(), dataFile );
 
-		m_undoCheckPoints.push( CheckPoint( jo->id(), dataFile ) );
-		if( m_undoCheckPoints.size() > MAX_UNDO_STATES )
+		if( m_openGroup.has_value() )
 		{
-			m_undoCheckPoints.remove( 0, m_undoCheckPoints.size() - MAX_UNDO_STATES );
+			// Check if already captured in this group
+			for( const CheckPoint & existing : m_openGroup->checkpoints )
+			{
+				if( existing.joID == jo->id() )
+				{
+					return; // Keep original state before mutations began
+				}
+			}
+			m_openGroup->checkpoints.append( std::move( cp ) );
+		}
+		else
+		{
+			m_redoEntries.clear();
+			JournalEntry entry;
+			entry.groupId = QString("undo_%1").arg(fastRand(), 0, 16);
+			entry.checkpoints.append( std::move( cp ) );
+			m_undoEntries.push( std::move( entry ) );
+			if( m_undoEntries.size() > MAX_UNDO_STATES )
+			{
+				m_undoEntries.remove( 0, m_undoEntries.size() - MAX_UNDO_STATES );
+			}
 		}
 	}
 }
@@ -172,8 +297,9 @@ jo_id_t ProjectJournal::idFromSave( jo_id_t id )
 
 void ProjectJournal::clearJournal()
 {
-	m_undoCheckPoints.clear();
-	m_redoCheckPoints.clear();
+	m_undoEntries.clear();
+	m_redoEntries.clear();
+	m_openGroup = std::nullopt;
 
 	for( JoIdMap::Iterator it = m_joIDs.begin(); it != m_joIDs.end(); )
 	{

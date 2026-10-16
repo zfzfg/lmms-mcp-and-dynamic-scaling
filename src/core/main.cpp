@@ -71,6 +71,10 @@
 #include "RenderManager.h"
 #include "Song.h"
 
+#ifdef LMMS_HAVE_MCP
+#include "AiControlService.h"
+#endif
+
 #ifdef LMMS_DEBUG_FPE
 #include <fenv.h> // For feenableexcept
 #include <execinfo.h> // For backtrace and backtrace_symbols_fd
@@ -253,6 +257,9 @@ int main( int argc, char * * argv )
 	bool allowRoot = false;
 	bool renderLoop = false;
 	bool renderTracks = false;
+	bool mcpEnabled = false;
+	QString mcpConnectionFile;
+	QString renderReportPath;
 	QString fileToLoad, fileToImport, renderOut, profilerOutputFile, configFile;
 
 	// first of two command-line parsing stages
@@ -282,6 +289,10 @@ int main( int argc, char * * argv )
 		else if (arg == "--allowroot")
 		{
 			allowRoot = true;
+		}
+		else if (arg == "--mcp")
+		{
+			mcpEnabled = true;
 		}
 		else if (arg == "--geometry" || arg == "-geometry")
 		{
@@ -649,6 +660,28 @@ int main( int argc, char * * argv )
 
 			configFile = QString::fromLocal8Bit( argv[i] );
 		}
+		else if( arg == "--mcp" )
+		{
+			mcpEnabled = true;
+		}
+		else if( arg == "--mcp-connection-file" )
+		{
+			++i;
+			if( i == argc )
+			{
+				return usageError( "No MCP connection file specified" );
+			}
+			mcpConnectionFile = QString::fromLocal8Bit( argv[i] );
+		}
+		else if( arg == "--render-report" )
+		{
+			++i;
+			if( i == argc )
+			{
+				return usageError( "No render report file specified" );
+			}
+			renderReportPath = QString::fromLocal8Bit( argv[i] );
+		}
 		else
 		{
 			if( argv[i][0] == '-' )
@@ -670,6 +703,14 @@ int main( int argc, char * * argv )
 	}
 
 	ConfigManager::inst()->loadConfigFile(configFile);
+
+#ifdef LMMS_HAVE_MCP
+	if (mcpEnabled)
+	{
+		ai::AiControlService::instance()->startService(mcpConnectionFile);
+		ai::AiControlService::instance()->setReady(true);
+	}
+#endif
 
 	// set language
 	QString pos = ConfigManager::inst()->value( "app", "language" );
@@ -913,6 +954,21 @@ int main( int argc, char * * argv )
 	}
 
 	const int ret = app->exec();
+
+	if( !renderReportPath.isEmpty() )
+	{
+		QJsonObject rep;
+		rep["exitCode"] = ret;
+		rep["outputFile"] = renderOut;
+		rep["success"] = (ret == 0 && QFile::exists(renderOut));
+		QFile rf(renderReportPath);
+		if( rf.open(QIODevice::WriteOnly) )
+		{
+			rf.write(QJsonDocument(rep).toJson());
+			rf.close();
+		}
+	}
+
 	delete app;
 
 	if( destroyEngine )
