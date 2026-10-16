@@ -1,29 +1,27 @@
 #ifndef LMMS_AI_OBJECT_REGISTRY_H
 #define LMMS_AI_OBJECT_REGISTRY_H
 
+#include <QHash>
+#include <QMutex>
 #include <QObject>
 #include <QPointer>
 #include <QString>
-#include <QHash>
-#include <QMutex>
 #include <cstdint>
 #include <memory>
 
-#include "lmms_export.h"
 #include "AiDomainTypes.h"
+#include "lmms_export.h"
 
-namespace lmms
-{
+namespace lmms {
 class Track;
 class Clip;
 class MidiClip;
 class Note;
 class MixerChannel;
 class AutomatableModel;
-}
+} // namespace lmms
 
-namespace lmms::ai
-{
+namespace lmms::ai {
 
 class LMMS_EXPORT AiObjectRegistry : public QObject
 {
@@ -50,6 +48,7 @@ public:
 	bool parseNoteRef(const QString& noteRef, QString& outClipHandle, uint64_t& outClipRev, int& outNoteIndex) const;
 
 	// MixerChannel mapping
+	void invalidateMixerChannels();
 	QString registerMixerChannel(int channelIndex);
 	int lookupMixerChannel(const QString& handle) const;
 
@@ -62,6 +61,7 @@ private:
 
 	mutable QMutex m_mutex;
 	uint64_t m_generation{1};
+	uint64_t m_mixerGeneration{1};
 
 	// Generational maps
 	QHash<QString, QPointer<Track>> m_tracksByHandle;

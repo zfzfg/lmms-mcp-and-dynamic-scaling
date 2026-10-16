@@ -1,21 +1,21 @@
 #ifndef LMMS_AI_EDIT_TRANSACTION_H
 #define LMMS_AI_EDIT_TRANSACTION_H
 
-#include <QString>
-#include <QJsonObject>
 #include <QHash>
+#include <QJsonObject>
+#include <QString>
+#include <functional>
 #include <memory>
-#include "lmms_export.h"
-#include "AiDomainTypes.h"
-#include "AiChangePlan.h"
 
-namespace lmms
-{
+#include "AiChangePlan.h"
+#include "AiDomainTypes.h"
+#include "lmms_export.h"
+
+namespace lmms {
 class Song;
 }
 
-namespace lmms::ai
-{
+namespace lmms::ai {
 
 struct LMMS_EXPORT ApplyResult
 {
@@ -36,10 +36,7 @@ struct LMMS_EXPORT ApplyResult
 		o["undoGroupId"] = undoGroupId;
 		o["createdObjects"] = createdObjects;
 		o["addedNotes"] = addedNotes;
-		if (error.hasError())
-		{
-			o["error"] = error.toJson();
-		}
+		if (error.hasError()) { o["error"] = error.toJson(); }
 		return o;
 	}
 };
@@ -47,9 +44,10 @@ struct LMMS_EXPORT ApplyResult
 class LMMS_EXPORT AiEditTransaction
 {
 public:
-	static ApplyResult executePlan(Song* song,
-	                              std::shared_ptr<AiChangePlan> plan,
-	                              const QString& operationKey);
+	static DomainError validateCommands(const std::vector<ChangeCommand>& commands);
+	// The optional observer is an internal fault-injection seam; it is never accepted over IPC.
+	static ApplyResult executePlan(Song* song, std::shared_ptr<AiChangePlan> plan, const QString& operationKey,
+		qint64 deadlineEpochMs = 0, const std::function<void(int)>& afterCommand = {});
 };
 
 } // namespace lmms::ai

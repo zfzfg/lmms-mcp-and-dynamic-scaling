@@ -23,6 +23,12 @@
  */
 
 #include "Song.h"
+
+#include "lmmsconfig.h"
+#ifdef LMMS_HAVE_MCP
+#include "AiControlService.h"
+#include "AiProjectRevision.h"
+#endif
 #include <QTextStream>
 #include <QCoreApplication>
 #include <QDebug>
@@ -454,6 +460,9 @@ void Song::processMetronome(size_t bufferOffset)
 
 void Song::setModified(bool value)
 {
+#ifdef LMMS_HAVE_MCP
+	if (value && !m_loadingProject) { ai::AiProjectRevision::instance()->onModelModified(); }
+#endif
 	if( !m_loadingProject && m_modified != value)
 	{
 		m_modified = value;
@@ -849,6 +858,10 @@ AutomatedValueMap Song::automatedValuesAt(TimePos time, int clipNum) const
 
 void Song::clearProject()
 {
+#ifdef LMMS_HAVE_MCP
+	ai::AiControlService::instance()->setReady(false);
+	ai::AiProjectRevision::instance()->resetProject();
+#endif
 	using gui::getGUI;
 
 	Engine::projectJournal()->setJournalling( false );
@@ -976,6 +989,9 @@ void Song::createNewProject()
 	QCoreApplication::instance()->processEvents();
 
 	m_loadingProject = false;
+#ifdef LMMS_HAVE_MCP
+	if (ai::AiControlService::instance()->isRunning()) { ai::AiControlService::instance()->setReady(true); }
+#endif
 	updateLength();
 	Engine::patternStore()->updateAfterTrackAdd();
 
@@ -1205,6 +1221,9 @@ void Song::loadProject( const QString & fileName )
 	}
 
 	m_loadingProject = false;
+#ifdef LMMS_HAVE_MCP
+	if (ai::AiControlService::instance()->isRunning()) { ai::AiControlService::instance()->setReady(true); }
+#endif
 	updateLength();
 	setModified(false);
 	m_loadOnLaunch = false;
@@ -1212,7 +1231,7 @@ void Song::loadProject( const QString & fileName )
 
 
 // only save current song as filename and do nothing else
-bool Song::saveProjectFile(const QString & filename, bool withResources)
+bool Song::saveProjectFile(const QString& filename, bool withResources, bool showErrors)
 {
 	using gui::getGUI;
 
@@ -1250,7 +1269,7 @@ bool Song::saveProjectFile(const QString & filename, bool withResources)
 
 	m_savingProject = false;
 
-	bool writeStatus = dataFile.writeFile(filename, withResources);
+	bool writeStatus = dataFile.writeFile(filename, withResources, showErrors);
 
 	// revert to a randomized global seed for Qt
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)

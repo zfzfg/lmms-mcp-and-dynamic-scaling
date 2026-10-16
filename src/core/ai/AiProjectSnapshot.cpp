@@ -1,21 +1,27 @@
 #include "AiProjectSnapshot.h"
-#include "Song.h"
-#include "Engine.h"
-#include "AudioEngine.h"
+
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
+#include <QDomDocument>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
+#include <QTemporaryDir>
 #include <QUuid>
 
-namespace lmms::ai
-{
+#include "AiProjectRevision.h"
+#include "AudioEngine.h"
+#include "Engine.h"
+#include "PathUtil.h"
+#include "Song.h"
 
-DomainError AiProjectSnapshot::createSnapshot(Song* song,
-                                              uint64_t revision,
-                                              const QString& targetTempDir,
-                                              SnapshotMetadata& outMetadata)
+namespace lmms::ai {
+
+DomainError AiProjectSnapshot::createSnapshot(
+	Song* song, uint64_t revision, const QString& targetTempDir, SnapshotMetadata& outMetadata)
 {
 	DomainError err;
 	if (!song)
@@ -25,26 +31,20 @@ DomainError AiProjectSnapshot::createSnapshot(Song* song,
 		return err;
 	}
 
-	QString snapshotId = QString("snap_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8));
-	QString dirPath = targetTempDir.isEmpty()
-		? QDir::tempPath() + "/lmms_snapshot_" + snapshotId
-		: targetTempDir;
-
-	QDir dir(dirPath);
-	if (!dir.exists())
+	QString snapshotId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+	QTemporaryDir temporary(QDir::tempPath() + "/lmms_snapshot_XXXXXX");
+	if (!temporary.isValid()) { return {ErrorCode::InternalError, "Cannot create snapshot directory."}; }
+	if (!targetTempDir.isEmpty())
 	{
-		dir.mkpath(".");
+		return {ErrorCode::ValidationError, "Custom snapshot directories are not supported."};
 	}
+	QString dirPath = temporary.path();
+	QDir dir(dirPath);
 
 	QString snapshotFile = dir.filePath("project.mmp");
 	QString manifestFile = dir.filePath("manifest.json");
 
-	bool saveOk = false;
-	{
-		// Protect snapshot saving with RAII model lock
-		auto guard = Engine::audioEngine()->requestChangesGuard();
-		saveOk = song->saveProjectFile(snapshotFile, false);
-	}
+	const bool saveOk = song->saveProjectFile(snapshotFile, false, false);
 
 	if (!saveOk || !QFile::exists(snapshotFile))
 	{
@@ -53,19 +53,66 @@ DomainError AiProjectSnapshot::createSnapshot(Song* song,
 		return err;
 	}
 
+	QFile project(snapshotFile);
+	QDomDocument document;
+	if (!project.open(QIODevice::ReadOnly) || !document.setContent(&project))
+	{
+		return {ErrorCode::InternalError, "Cannot read snapshot."};
+	}
+	project.close();
+	QJsonArray resources;
+	qint64 totalBytes = 0;
+	if (!dir.mkdir("resources")) { return {ErrorCode::InternalError, "Cannot create resource directory."}; }
+	for (const auto& tag : {QString("sampleclip"), QString("audiofileprocessor")})
+	{
+		auto elements = document.elementsByTagName(tag);
+		for (int i = 0; i < elements.size(); ++i)
+		{
+			auto element = elements.at(i).toElement();
+			const QString source = element.attribute("src");
+			if (source.isEmpty()) { continue; }
+			bool failed = false;
+			const QString absolute = PathUtil::toAbsolute(source, &failed);
+			QFileInfo info(absolute);
+			totalBytes += info.size();
+			if (failed || !info.isFile() || info.size() > 64 * 1024 * 1024 || totalBytes > 256 * 1024 * 1024
+				|| resources.size() >= 2000)
+			{
+				return {ErrorCode::AssetNotFound, "A snapshot resource is missing or exceeds the resource budget."};
+			}
+			const QString name
+				= QString::fromLatin1(
+					  QCryptographicHash::hash(info.canonicalFilePath().toUtf8(), QCryptographicHash::Sha256).toHex())
+				+ "." + info.suffix();
+			element.setAttribute("src", dir.filePath("resources/" + name));
+			resources.append(QJsonObject{{"sourcePath", info.canonicalFilePath()}, {"fileName", name},
+				{"bytes", info.size()}, {"modifiedAt", info.lastModified().toMSecsSinceEpoch()}});
+		}
+	}
+
+	QSaveFile frozen(snapshotFile);
+	const auto xml = document.toByteArray();
+	if (!frozen.open(QIODevice::WriteOnly) || frozen.write(xml) != xml.size() || !frozen.commit())
+	{
+		return {ErrorCode::InternalError, "Cannot finalize snapshot."};
+	}
 	// Write manifest
 	QJsonObject manifestObj;
 	manifestObj["snapshotId"] = snapshotId;
+	manifestObj["projectId"] = AiProjectRevision::instance()->projectId();
+	manifestObj["resources"] = resources;
 	manifestObj["projectRevision"] = static_cast<qint64>(revision);
 	manifestObj["createdAt"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
-	QFile mf(manifestFile);
-	if (mf.open(QIODevice::WriteOnly))
+	QSaveFile mf(manifestFile);
+	const auto manifest = QJsonDocument(manifestObj).toJson();
+	if (!mf.open(QIODevice::WriteOnly) || mf.write(manifest) != manifest.size() || !mf.commit())
 	{
-		mf.write(QJsonDocument(manifestObj).toJson());
-		mf.close();
+		return {ErrorCode::InternalError, "Cannot write resource manifest."};
 	}
 
+	temporary.setAutoRemove(false);
+	outMetadata.projectId = AiProjectRevision::instance()->projectId();
 	outMetadata.snapshotId = snapshotId;
 	outMetadata.projectRevision = revision;
 	outMetadata.snapshotFilePath = snapshotFile;
@@ -80,7 +127,9 @@ void AiProjectSnapshot::cleanupSnapshot(const SnapshotMetadata& metadata)
 	if (!metadata.tempDirectory.isEmpty())
 	{
 		QDir dir(metadata.tempDirectory);
-		if (dir.exists())
+		if (dir.exists() && !QFileInfo(metadata.tempDirectory).isSymLink()
+			&& QFileInfo(metadata.tempDirectory).absolutePath() == QDir::tempPath()
+			&& QFileInfo(metadata.tempDirectory).fileName().startsWith("lmms_snapshot_"))
 		{
 			dir.removeRecursively();
 		}

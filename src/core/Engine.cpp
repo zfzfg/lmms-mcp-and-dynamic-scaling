@@ -22,20 +22,21 @@
  *
  */
 
-
 #include "Engine.h"
+
 #include "AudioEngine.h"
+#include "BandLimitedWave.h"
 #include "ConfigManager.h"
-#include "Mixer.h"
 #include "Ladspa2LMMS.h"
 #include "Lv2Manager.h"
+#include "Mixer.h"
+#include "Oscillator.h"
 #include "PatternStore.h"
 #include "Plugin.h"
 #include "PresetPreviewPlayHandle.h"
 #include "ProjectJournal.h"
 #include "Song.h"
-#include "BandLimitedWave.h"
-#include "Oscillator.h"
+#include "lmmsconfig.h"
 
 #ifdef LMMS_HAVE_MCP
 #include "AiControlService.h"
@@ -92,12 +93,6 @@ void Engine::init( bool renderOnly )
 	emit engine->initProgress(tr("Launching audio engine threads"));
 	s_audioEngine->startProcessing();
 
-#ifdef LMMS_HAVE_MCP
-	if (!renderOnly)
-	{
-		ai::AiControlService::instance()->startService();
-	}
-#endif
 }
 
 

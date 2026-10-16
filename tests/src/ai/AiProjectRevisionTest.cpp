@@ -1,5 +1,6 @@
-#include <QtTest>
 #include "AiProjectRevision.h"
+
+#include <QtTest>
 
 class AiProjectRevisionTest : public QObject
 {
@@ -41,6 +42,7 @@ private slots:
 		using namespace lmms::ai;
 		auto rev = AiProjectRevision::instance();
 
+		rev->resetProject("clip_revision_test");
 		QString clipHandle = "clp_1_10";
 		QCOMPARE(rev->currentClipRevision(clipHandle), static_cast<uint64_t>(1));
 

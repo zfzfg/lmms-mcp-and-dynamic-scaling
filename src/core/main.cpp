@@ -53,26 +53,29 @@
 #include <sys/prctl.h>
 #endif
 
-#include <csignal>  // To register the signal handler
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <csignal> // To register the signal handler
 
-#include "MainApplication.h"
 #include "ConfigManager.h"
 #include "DataFile.h"
-#include "NotePlayHandle.h"
-#include "embed.h"
 #include "Engine.h"
 #include "GuiApplication.h"
 #include "Hardware.h"
 #include "ImportFilter.h"
+#include "MainApplication.h"
 #include "MainWindow.h"
 #include "MixHelpers.h"
+#include "NotePlayHandle.h"
 #include "OutputSettings.h"
 #include "ProjectRenderer.h"
 #include "RenderManager.h"
 #include "Song.h"
+#include "embed.h"
 
 #ifdef LMMS_HAVE_MCP
 #include "AiControlService.h"
+#include "AiProjectSnapshot.h"
 #endif
 
 #ifdef LMMS_DEBUG_FPE
@@ -267,6 +270,7 @@ int main( int argc, char * * argv )
 #endif
 	QString mcpConnectionFile;
 	QString renderReportPath;
+	QString snapshotManifest;
 	QString fileToLoad, fileToImport, renderOut, profilerOutputFile, configFile;
 
 	// first of two command-line parsing stages
@@ -626,6 +630,15 @@ int main( int argc, char * * argv )
 				return usageError( QString( "Invalid stereo mode %1" ).arg( argv[i] ) );
 			}
 		}
+		else if (arg == "--bitdepth")
+		{
+			if (++i == argc) { return usageError("Missing bit depth"); }
+			const int depth = QString::fromLocal8Bit(argv[i]).toInt();
+			if (depth != 16 && depth != 24 && depth != 32) { return usageError("Bit depth must be 16, 24 or 32"); }
+			os.setBitDepth(depth == 16 ? OutputSettings::BitDepth::Depth16Bit
+					: depth == 24	   ? OutputSettings::BitDepth::Depth24Bit
+									   : OutputSettings::BitDepth::Depth32Bit);
+		}
 		else if( arg =="--float" || arg == "-a" )
 		{
 			os.setBitDepth(OutputSettings::BitDepth::Depth32Bit);
@@ -675,6 +688,7 @@ int main( int argc, char * * argv )
 		{
 			mcpEnabled = true;
 		}
+		else if (arg == "--no-mcp") { mcpEnabled = false; }
 		else if( arg == "--mcp-connection-file" )
 		{
 			++i;
@@ -683,6 +697,11 @@ int main( int argc, char * * argv )
 				return usageError( "No MCP connection file specified" );
 			}
 			mcpConnectionFile = QString::fromLocal8Bit( argv[i] );
+		}
+		else if (arg == "--snapshot-manifest")
+		{
+			if (++i == argc) { return usageError("Missing snapshot manifest"); }
+			snapshotManifest = QString::fromLocal8Bit(argv[i]);
 		}
 		else if( arg == "--render-report" )
 		{
@@ -703,6 +722,9 @@ int main( int argc, char * * argv )
 		}
 	}
 
+#ifndef LMMS_HAVE_MCP
+	if (mcpEnabled || !mcpConnectionFile.isEmpty() || !snapshotManifest.isEmpty()) { return usageError("This build does not include MCP support"); }
+#endif
 	// Test file argument before continuing
 	if( !fileToLoad.isEmpty() )
 	{
@@ -715,17 +737,6 @@ int main( int argc, char * * argv )
 
 	ConfigManager::inst()->loadConfigFile(configFile);
 
-#ifdef LMMS_HAVE_MCP
-	if (mcpEnabled && !coreOnly)
-	{
-		ai::AiControlService::instance()->startService(mcpConnectionFile);
-		ai::AiControlService::instance()->setReady(true);
-	}
-	else if (!mcpEnabled)
-	{
-		ai::AiControlService::instance()->stopService();
-	}
-#endif
 
 	// set language
 	QString pos = ConfigManager::inst()->value( "app", "language" );
@@ -765,12 +776,21 @@ int main( int argc, char * * argv )
 	// without starting the GUI
 	if( !renderOut.isEmpty() )
 	{
+#ifdef LMMS_HAVE_MCP
+		if (!snapshotManifest.isEmpty())
+		{
+			const auto result = ai::AiProjectSnapshot::materializeResources(snapshotManifest);
+			if (result.hasError()) { QTextStream(stderr) << result.message << Qt::endl; return EXIT_FAILURE; }
+			QTextStream(stderr) << "LMMS_SNAPSHOT_READY" << Qt::endl;
+		}
+#endif
+
 		Engine::init( true );
 		destroyEngine = true;
 
 		printf( "Loading project...\n" );
 		Engine::getSong()->loadProject( fileToLoad );
-		if( Engine::getSong()->isEmpty() )
+		if (Engine::getSong()->isEmpty() || (!renderReportPath.isEmpty() && Engine::getSong()->hasErrors()))
 		{
 			printf("The project %s is empty, aborting!\n", fileToLoad.toUtf8().constData() );
 			exit( EXIT_FAILURE );
@@ -789,8 +809,9 @@ int main( int argc, char * * argv )
 
 		// create renderer
 		auto r = new RenderManager(os, eff, renderOut);
-		QCoreApplication::instance()->connect( r,
-				SIGNAL(finished()), SLOT(quit()));
+		r->setParent(app);
+		QObject::connect(r, &RenderManager::finished, app,
+			[r] { QCoreApplication::exit(r->succeeded() ? EXIT_SUCCESS : EXIT_FAILURE); });
 
 		// timer for progress-updates
 		auto t = new QTimer(r);
@@ -804,14 +825,8 @@ int main( int argc, char * * argv )
 		}
 
 		// start now!
-		if ( renderTracks )
-		{
-			r->renderTracks();
-		}
-		else
-		{
-			r->renderProject();
-		}
+		if (renderTracks) { QTimer::singleShot(0, r, &RenderManager::renderTracks); }
+		else { QTimer::singleShot(0, r, &RenderManager::renderProject); }
 	}
 	else // otherwise, start the GUI
 	{
@@ -968,6 +983,13 @@ int main( int argc, char * * argv )
 		}
 	}
 
+#ifdef LMMS_HAVE_MCP
+	if (mcpEnabled && !coreOnly)
+	{
+		auto* service = ai::AiControlService::instance();
+		if (service->startService(mcpConnectionFile)) { service->setReady(true); }
+	}
+#endif
 	const int ret = app->exec();
 
 	if( !renderReportPath.isEmpty() )

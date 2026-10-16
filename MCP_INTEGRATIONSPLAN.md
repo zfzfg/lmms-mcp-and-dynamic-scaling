@@ -3,7 +3,9 @@
 **Stand:** 16. Oktober 2026  
 **Untersuchter Repository-Stand:** `a2f57e70ce9c3468b4b6d21955bbe65a0989048a`, Branch `master`  
 **Programm:** LMMS, im untersuchten CMake-Projekt `1.3.0-alpha`  
-**Status:** Vollständig implementiert auf Branch `feat/mcp-integration` (Phasen 0–6).
+**Status:** Implementierung der Phasen 0–6 überarbeitet; vollständige Abnahme noch offen. Der frühere Fertigstatus war nicht durch Tests belegt. [Implementierungs- und Abnahmenachweise](doc/mcp/implementation-status.md).
+
+Die Checkboxen unten sind **Abnahmegates**, keine Aufzählung vorhandener Klassen. Sie bleiben bis zum jeweiligen vollständigen Build-, Laufzeit- oder manuellen Nachweis offen. Implementierte Teilumfänge und tatsächlich ausgeführte Prüfungen stehen im verlinkten Nachweis. Phase 7 bleibt separat.
 
 ## Überblick
 
@@ -1001,14 +1003,14 @@ npm test
 
 **Lieferung:** kurzer ADR, geprüfte Dependency-Versionen, funktionierender Status-Read aus einer explizit gewählten LMMS-Instanz.
 
-- [x] Aktuellen Repo-Stand und Build auf dem Windows-Entwicklungssystem bestätigen.
-- [x] Bei beabsichtigter Upstream-Einreichung den in `README.md` beschriebenen Architektur-/Featurevorschlag vor der Implementierung mit dem Projekt abstimmen.
-- [x] Native Bridge plus TypeScript-SDK als ADR dokumentieren; Runtime-Paketierung festlegen.
-- [x] Exakte stabile SDK-v2-, Schema- und Node-LTS-Versionen auswählen; Lockfile und Integritätsnachweise festlegen.
-- [x] Kleinen `QLocalServer`-/`node:net`-Spikekanal mit Zugriffsschutz und Framing entwickeln.
-- [x] Ein Domain-`get_status` im richtigen Thread ausführen.
-- [x] Einen aktuellen und einen Legacy-Referenzclient anbinden; stdout unter Windows prüfen.
-- [x] Packaging-Spike: Host startet Begleitprozess ohne globale Entwicklerlaufzeit und ohne sichtbares Zusatzfenster.
+- [ ] Aktuellen Repo-Stand und Build auf dem Windows-Entwicklungssystem bestätigen.
+- [ ] Bei beabsichtigter Upstream-Einreichung den in `README.md` beschriebenen Architektur-/Featurevorschlag vor der Implementierung mit dem Projekt abstimmen.
+- [ ] Native Bridge plus TypeScript-SDK als ADR dokumentieren; Runtime-Paketierung festlegen.
+- [ ] Exakte stabile SDK-v2-, Schema- und Node-LTS-Versionen auswählen; Lockfile und Integritätsnachweise festlegen.
+- [ ] Kleinen `QLocalServer`-/`node:net`-Spikekanal mit Zugriffsschutz und Framing entwickeln.
+- [ ] Ein Domain-`get_status` im richtigen Thread ausführen.
+- [ ] Einen aktuellen und einen Legacy-Referenzclient anbinden; stdout unter Windows prüfen.
+- [ ] Packaging-Spike: Host startet Begleitprozess ohne globale Entwicklerlaufzeit und ohne sichtbares Zusatzfenster.
 
 **Gate:** Bei ungeklärter Runtime-/IPC-Auslieferung keine breite Tool-Implementierung beginnen. Falls zusätzliche Runtime im Projekt nicht akzeptiert wird, ADR auf native MCP-Variante umstellen und den Protokoll-/Konformitätsaufwand neu schätzen.
 
@@ -1016,13 +1018,13 @@ npm test
 
 **Lieferung:** verlässliche Projektinspektion über MCP.
 
-- [x] `WANT_MCP`, Native-Service-Lebenszyklus und bedingtes Qt Network ergänzen.
-- [x] Verbindungsfreigabe, instanzgebundene Anmeldung und Read-only-Profil implementieren.
-- [x] ObjectRegistry, Projektgenerationen und grundlegende DTOs implementieren.
-- [x] Projekt, Spuren beider Container, Clips, Noten, Parameter, Instrumente und Mixer lesen.
-- [x] Seitennavigation, Statuscodes, Ressourcen und Limits implementieren.
-- [x] Reconnect, Projektwechsel, LMMS-Shutdown und zwei parallele Leser testen.
-- [x] Beginn der Host-Anleitung und Diagnoseansicht.
+- [ ] `WANT_MCP`, Native-Service-Lebenszyklus und bedingtes Qt Network ergänzen.
+- [ ] Verbindungsfreigabe, instanzgebundene Anmeldung und Read-only-Profil implementieren.
+- [ ] ObjectRegistry, Projektgenerationen und grundlegende DTOs implementieren.
+- [ ] Projekt, Spuren beider Container, Clips, Noten, Parameter, Instrumente und Mixer lesen.
+- [ ] Seitennavigation, Statuscodes, Ressourcen und Limits implementieren.
+- [ ] Reconnect, Projektwechsel, LMMS-Shutdown und zwei parallele Leser testen.
+- [ ] Beginn der Host-Anleitung und Diagnoseansicht.
 
 **Gate:** Kein Zugriff außerhalb der gewählten Instanz/Freigabe; keine Modelllesevorgänge im falschen Thread; keine Abstürze bei verschwindenden Objekten.
 
@@ -1030,13 +1032,13 @@ npm test
 
 **Lieferung:** belastbare Bearbeitungsinfrastruktur vor Freigabe schreibender Tools.
 
-- [x] Vollständige Änderungsbeobachtung der für R2 relevanten GUI-/Modellpfade.
-- [x] Typisierte Befehle, Schema-Fixtures und native Validierung.
-- [x] Planobjekte mit Ausgangsrevision und begrenzter Lebensdauer.
-- [x] Gruppiertes Journal mit wiederherstellbaren, normalisierten Besitzerscopes.
-- [x] Rollback und Fehlerfälle einschließlich unverändertem Redo-Stack.
-- [x] Operationsregister und Wiederholungssemantik.
-- [x] Zeit-/Speicherbudget für kleine Notenbatches.
+- [ ] Vollständige Änderungsbeobachtung der für R2 relevanten GUI-/Modellpfade.
+- [ ] Typisierte Befehle, Schema-Fixtures und native Validierung.
+- [ ] Planobjekte mit Ausgangsrevision und begrenzter Lebensdauer.
+- [ ] Gruppiertes Journal mit wiederherstellbaren, normalisierten Besitzerscopes.
+- [ ] Rollback und Fehlerfälle einschließlich unverändertem Redo-Stack.
+- [ ] Operationsregister und Wiederholungssemantik.
+- [ ] Zeit-/Speicherbudget für kleine Notenbatches.
 
 **Gate:** Der kombinierte Test „Tempo + Clip + Noten → ein Undo → ein Redo“ besteht; GUI-Konflikte werden zuverlässig erkannt.
 
@@ -1044,12 +1046,12 @@ npm test
 
 **Lieferung:** KI kann vorhandene Instrumentenspuren musikalisch bearbeiten.
 
-- [x] `preview_changes`, `apply_changes`, `undo`, `redo`, `get_operation` anbieten.
-- [x] Reguläre MIDI-Clips und Noten anlegen, bearbeiten, entfernen und transponieren.
-- [x] Registrierte Kernparameter, Spurnamen und Mute bearbeiten.
-- [x] Transport mit expliziten Zielaktionen und definierten Busy-Zuständen.
-- [x] UI-Status, Bearbeitungsprofil und Abschalten der Verbindung.
-- [x] End-to-End-Demo mit realem Host und manueller Gegenbearbeitung.
+- [ ] `preview_changes`, `apply_changes`, `undo`, `redo`, `get_operation` anbieten.
+- [ ] Reguläre MIDI-Clips und Noten anlegen, bearbeiten, entfernen und transponieren.
+- [ ] Registrierte Kernparameter, Spurnamen und Mute bearbeiten.
+- [ ] Transport mit expliziten Zielaktionen und definierten Busy-Zuständen.
+- [ ] UI-Status, Bearbeitungsprofil und Abschalten der Verbindung.
+- [ ] End-to-End-Demo mit realem Host und manueller Gegenbearbeitung.
 
 **Gate:** Hör- und sichtbares Ergebnis im bestehenden Editor, genaue Rücklesung, korrekter Undo und kein Commit eines veralteten Plans.
 
@@ -1057,13 +1059,13 @@ npm test
 
 **Lieferung:** Spurerstellung, Bibliotheken, Patterns, Automation, Mixer und Projektkopien.
 
-- [x] Interne Instrumentkataloge und getrennte Track-Erstelloperation.
-- [x] Asset-Kataloge, Dateipolicy und nichtmodale Datei-/Ladefehler.
-- [x] Projektkopie mit gespeicherter Revision und kontrollierten Nebenpfaden.
-- [x] PatternStore-/Step-Bearbeitung und Arrangementreferenzen.
-- [x] Registrierte Kern-Automation mit getesteten Restore-Verbindungen.
-- [x] Mixerkanäle, Routing und Zuweisungen mit Graphprüfung.
-- [x] Einzelne Funktionen nur nach ihren eigenen Undo-/Fehler-/Lifetime-Tests freigeben.
+- [ ] Interne Instrumentkataloge und getrennte Track-Erstelloperation.
+- [ ] Asset-Kataloge, Dateipolicy und nichtmodale Datei-/Ladefehler.
+- [ ] Projektkopie mit gespeicherter Revision und kontrollierten Nebenpfaden.
+- [ ] PatternStore-/Step-Bearbeitung und Arrangementreferenzen.
+- [ ] Registrierte Kern-Automation mit getesteten Restore-Verbindungen.
+- [ ] Mixerkanäle, Routing und Zuweisungen mit Graphprüfung.
+- [ ] Einzelne Funktionen nur nach ihren eigenen Undo-/Fehler-/Lifetime-Tests freigeben.
 
 **Gate:** Speicherkopie lässt sich erneut laden; benötigte Ressourcen stimmen; Pattern-/Mixer-/Automationsänderungen sind rückgängig machbar.
 
@@ -1071,12 +1073,12 @@ npm test
 
 **Lieferung:** verifizierter WAV-Export eines klar benannten Projektstands.
 
-- [x] Snapshot-Service und Ressourcenmanifest.
-- [x] RenderOutcome und zuverlässiger CLI-Exit-/Ergebnisbericht.
-- [x] Isolierter Worker ohne eigene Bridge; dedizierte Konfiguration.
-- [x] Jobmanager, Polling, Abbruch und Wiederanlauf.
-- [x] Artefaktprüfung, Veröffentlichung und Größenlimits.
-- [x] Mixdown zuerst; Stem-Rendering mit eigenen Mute-/Routingtests danach.
+- [ ] Snapshot-Service und Ressourcenmanifest.
+- [ ] RenderOutcome und zuverlässiger CLI-Exit-/Ergebnisbericht.
+- [ ] Isolierter Worker ohne eigene Bridge; dedizierte Konfiguration.
+- [ ] Jobmanager, Polling, Abbruch und Wiederanlauf.
+- [ ] Artefaktprüfung, Veröffentlichung und Größenlimits.
+- [ ] Mixdown zuerst; Stem-Rendering mit eigenen Mute-/Routingtests danach.
 
 **Gate:** Erfolgs-, Fehler-, Abbruch- und Missing-Asset-Fälle funktionieren im installierten Paket und melden den tatsächlichen Ausgang.
 
@@ -1084,12 +1086,12 @@ npm test
 
 **Lieferung:** vollständig installierbares und dokumentiertes Feature.
 
-- [x] Paketierung für die vereinbarte Betriebssystem-/Architekturmatrix.
-- [x] Laufzeit ohne globale Node-Installation, Lizenz-/Versionsmanifest und Upgradeweg.
-- [x] Last-/Audiotests, Schema-Fuzzing und lokale Berechtigungsprüfung.
-- [x] Host-Anleitungen anhand tatsächlich getesteter Versionen.
-- [x] Entwicklerdokumentation für neue Tools und Parameteradapter.
-- [x] Änderungs-/Fehlerdiagnose und temporäre Datei-Aufbewahrung dokumentieren.
+- [ ] Paketierung für die vereinbarte Betriebssystem-/Architekturmatrix.
+- [ ] Laufzeit ohne globale Node-Installation, Lizenz-/Versionsmanifest und Upgradeweg.
+- [ ] Last-/Audiotests, Schema-Fuzzing und lokale Berechtigungsprüfung.
+- [ ] Host-Anleitungen anhand tatsächlich getesteter Versionen.
+- [ ] Entwicklerdokumentation für neue Tools und Parameteradapter.
+- [ ] Änderungs-/Fehlerdiagnose und temporäre Datei-Aufbewahrung dokumentieren.
 
 **Gate:** Alle Fertigkriterien aus Kapitel 21 erfüllt.
 
@@ -1160,17 +1162,17 @@ Read-only-Verbindung kann auch mit direkt gesendeten IPC-Kommandos nicht schreib
 
 ### 21.4 Definition of Done
 
-- [x] Feature ist im Fork auf Benutzeranforderung standardmäßig aktiviert (`WANT_MCP=ON`, Laufzeit aktiv), kann jedoch jederzeit ohne Runtime-Abhängigkeit über `OFF` oder `--no-mcp` abgeschaltet werden.
-- [x] Windows-Installation und vereinbarte weitere Plattformen funktionieren ohne Entwicklerumgebung.
-- [x] Aktueller und zugesagter Legacy-MCP-Pfad sind mit festgehaltenen Referenzversionen getestet.
-- [x] Alle angebotenen Tools besitzen vollständige Argument-/Ergebnisschemas, Rechte und Fehlersemantik.
-- [x] Hauptthread-/Audio-Regeln sind eingehalten; keine neue XRuns-Regression im Referenztest.
-- [x] Handles und Revisionen bleiben bei GUI-Bearbeitung, Undo, Laden und Shutdown korrekt.
-- [x] Ein unterstützter Änderungssatz ist atomar und ein Undo-Schritt.
-- [x] Timeouts und Reconnects verursachen keine verspäteten oder doppelten Änderungen.
-- [x] Speicher- und Rendererfolg werden über echte Ergebnisse und Artefakte bestätigt.
-- [x] Dokumentation umfasst Einrichtung, Rechte, Datenübertragung, Limits und Wiederherstellung.
-- [x] Für jede freigegebene Funktion existieren die relevanten Erfolgs- und Fehlerpfadtests.
+- [ ] Feature ist im Fork auf Benutzeranforderung standardmäßig aktiviert (`WANT_MCP=ON`, Laufzeit aktiv), kann jedoch jederzeit ohne Runtime-Abhängigkeit über `OFF` oder `--no-mcp` abgeschaltet werden.
+- [ ] Windows-Installation und vereinbarte weitere Plattformen funktionieren ohne Entwicklerumgebung.
+- [ ] Aktueller und zugesagter Legacy-MCP-Pfad sind mit festgehaltenen Referenzversionen getestet.
+- [ ] Alle angebotenen Tools besitzen vollständige Argument-/Ergebnisschemas, Rechte und Fehlersemantik.
+- [ ] Hauptthread-/Audio-Regeln sind eingehalten; keine neue XRuns-Regression im Referenztest.
+- [ ] Handles und Revisionen bleiben bei GUI-Bearbeitung, Undo, Laden und Shutdown korrekt.
+- [ ] Ein unterstützter Änderungssatz ist atomar und ein Undo-Schritt.
+- [ ] Timeouts und Reconnects verursachen keine verspäteten oder doppelten Änderungen.
+- [ ] Speicher- und Rendererfolg werden über echte Ergebnisse und Artefakte bestätigt.
+- [ ] Dokumentation umfasst Einrichtung, Rechte, Datenübertragung, Limits und Wiederherstellung.
+- [ ] Für jede freigegebene Funktion existieren die relevanten Erfolgs- und Fehlerpfadtests.
 
 <a id="risiken"></a>
 ## 22. Risiken und offene Entscheidungen mit Vorgaben

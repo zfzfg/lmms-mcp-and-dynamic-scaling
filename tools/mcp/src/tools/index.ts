@@ -1,3 +1,4 @@
+import { CHANGE_COMMAND_SCHEMA, outputSchema } from "../contracts.js";
 import { BridgeClient } from "../bridge-client.js";
 
 export interface ToolDefinition {
@@ -7,7 +8,10 @@ export interface ToolDefinition {
     type: "object";
     properties: Record<string, unknown>;
     required?: string[];
+    additionalProperties?: boolean;
   };
+  outputSchema?: Record<string, unknown>;
+  annotations?: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean };
   handler: (client: BridgeClient, args: any) => Promise<{
     content: Array<{ type: "text"; text: string }>;
     structuredContent?: Record<string, unknown>;
@@ -328,7 +332,7 @@ export const TOOLS: ToolDefinition[] = [
       type: "object",
       required: ["assetId", "targetTrackId"],
       properties: {
-        assetId: { type: "string", description: "Relative asset filename or path" },
+        assetId: { type: "string", description: "Opaque assetId returned by lmms_list_assets" },
         targetTrackId: { type: "string", description: "Target track handle" }
       }
     },
@@ -366,8 +370,8 @@ export const TOOLS: ToolDefinition[] = [
       required: ["outputFileName"],
       properties: {
         outputFileName: { type: "string", description: "Filename in export directory (e.g. 'song.wav')" },
-        format: { type: "string", enum: ["wav", "ogg", "mp3"], default: "wav" },
-        sampleRate: { type: "integer", enum: [44100, 48000, 88200, 96000], default: 44100 },
+        format: { type: "string", enum: ["wav"], default: "wav" },
+        sampleRate: { type: "integer", minimum: 8000, maximum: 192000, default: 44100 },
         bitDepth: { type: "integer", enum: [16, 24, 32], default: 16 }
       }
     },
@@ -420,3 +424,32 @@ export const TOOLS: ToolDefinition[] = [
     }
   }
 ];
+
+TOOLS.push({ name: "lmms_list_assets", description: "List samples or presets in a permitted catalog. Use returned opaque assetId to load.",
+ inputSchema: { type: "object", required: ["rootId"], properties: { rootId: { enum: ["samples", "presets"] }, cursor: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 500 } } },
+ handler: async (client, args) => { const result = await client.call("list_assets", args); return { content: [{ type: "text", text: `${result.items.length} catalog assets` }], structuredContent: result }; }
+});
+
+TOOLS.push({ name: "lmms_get_automation", description: "Read automation points, interpolation and target parameters with revision-bound pagination.",
+ inputSchema: { type: "object", required: ["clipId"], properties: { clipId: { type: "string" }, cursor: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 500 } } },
+ handler: async (client, args) => { const result = await client.call("get_automation", args); return { content: [{ type: "text", text: `${result.points.length} automation points` }], structuredContent: result }; }
+});
+
+const writes = new Set(["apply_changes", "set_transport", "undo", "redo", "create_instrument_track", "load_asset", "save_project_copy", "start_render", "cancel_job"]);
+for (const tool of TOOLS) {
+ const action = tool.name.replace(/^lmms_/, "");
+ tool.inputSchema.additionalProperties = false;
+ tool.annotations = { readOnlyHint: !writes.has(action), destructiveHint: ["apply_changes", "undo", "redo", "load_asset"].includes(action), idempotentHint: true, openWorldHint: false };
+ tool.outputSchema = outputSchema(action);
+ if (writes.has(action)) {
+  tool.inputSchema.properties.operationKey = { type: "string", minLength: 1, maxLength: 128 };
+  tool.inputSchema.required = [...new Set([...(tool.inputSchema.required ?? []), "operationKey"])];
+  if (action !== "cancel_job") {
+   tool.inputSchema.properties.projectId = { type: "string", minLength: 1 };
+   tool.inputSchema.properties.expectedRevision = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
+   tool.inputSchema.required = [...new Set([...tool.inputSchema.required, "projectId", "expectedRevision"])];
+  }
+ }
+ if (action === "undo" || action === "redo") { tool.inputSchema.required!.push("undoGroupId"); }
+ if (action === "preview_changes") { Object.assign(tool.inputSchema.properties.changes as object, { minItems: 1, maxItems: 64, items: CHANGE_COMMAND_SCHEMA }); }
+}

@@ -4,16 +4,15 @@
 #include <QString>
 #include <QStringList>
 #include <cstdint>
-#include "lmms_export.h"
-#include "AiDomainTypes.h"
 
-namespace lmms
-{
+#include "AiDomainTypes.h"
+#include "lmms_export.h"
+
+namespace lmms {
 class Song;
 }
 
-namespace lmms::ai
-{
+namespace lmms::ai {
 
 struct LMMS_EXPORT SnapshotMetadata
 {
@@ -28,11 +27,10 @@ struct LMMS_EXPORT SnapshotMetadata
 class LMMS_EXPORT AiProjectSnapshot
 {
 public:
-	static DomainError createSnapshot(Song* song,
-	                                  uint64_t revision,
-	                                  const QString& targetTempDir,
-	                                  SnapshotMetadata& outMetadata);
+	static DomainError createSnapshot(
+		Song* song, uint64_t revision, const QString& targetTempDir, SnapshotMetadata& outMetadata);
 
+	static DomainError materializeResources(const QString& manifestFile);
 	static void cleanupSnapshot(const SnapshotMetadata& metadata);
 };
 

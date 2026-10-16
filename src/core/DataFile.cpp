@@ -309,14 +309,11 @@ void DataFile::write( QTextStream & _strm )
 	save(_strm, 2);
 }
 
-
-
-
-bool DataFile::writeFile(const QString& filename, bool withResources)
+bool DataFile::writeFile(const QString& filename, bool withResources, bool showErrors)
 {
 	// Small lambda function for displaying errors
-	auto showError = [](QString title, QString body){
-		if (gui::getGUI() != nullptr)
+	auto showError = [showErrors](QString title, QString body) {
+		if (showErrors && gui::getGUI() != nullptr)
 		{
 			QMessageBox mb;
 			mb.setWindowTitle(title);

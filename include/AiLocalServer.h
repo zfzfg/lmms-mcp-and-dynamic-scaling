@@ -1,21 +1,27 @@
 #ifndef LMMS_AI_LOCAL_SERVER_H
 #define LMMS_AI_LOCAL_SERVER_H
 
-#include <QObject>
-#include <QLocalServer>
-#include <QLocalSocket>
 #include <QByteArray>
 #include <QHash>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QMutex>
-#include "lmms_export.h"
-#include "AiDomainTypes.h"
+#include <QObject>
+#include <QPointer>
+#include <atomic>
+#include <memory>
 
-namespace lmms::ai
-{
+#include "AiDomainTypes.h"
+#include "lmms_export.h"
+
+namespace lmms::ai {
 
 struct ClientSession
 {
 	bool authenticated{false};
+	int pending{0};
+	uint64_t permissionGeneration{0};
+	std::shared_ptr<std::atomic_bool> alive{std::make_shared<std::atomic_bool>(true)};
 	Permission grantedPermissions{Permission::None};
 	QByteArray readBuffer;
 };
@@ -29,6 +35,7 @@ public:
 
 	bool startListening(const QString& pipeOrSocketName);
 	void stopListening();
+	void revokeSessions();
 	bool isListening() const;
 	QString serverName() const;
 
@@ -40,8 +47,10 @@ private slots:
 private:
 	void processFrame(QLocalSocket* socket, const QByteArray& frame);
 	void sendFrame(QLocalSocket* socket, const QByteArray& frame);
-	void sendResponse(QLocalSocket* socket, qint64 id, const QJsonObject& result, const DomainError& error = DomainError());
+	void sendResponse(
+		QLocalSocket* socket, qint64 id, const QJsonObject& result, const DomainError& error = DomainError());
 
+	QPointer<QLocalSocket> m_writer;
 	QLocalServer* m_server{nullptr};
 	mutable QMutex m_mutex;
 	QHash<QLocalSocket*, ClientSession> m_clients;

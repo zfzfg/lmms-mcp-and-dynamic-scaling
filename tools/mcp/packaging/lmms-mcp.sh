@@ -1,3 +1,3 @@
 #!/usr/bin/env sh
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec node "$SCRIPT_DIR/../dist/src/index.js" "$@"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$SCRIPT_DIR/bin/node" "$SCRIPT_DIR/dist/src/index.js" "$@"

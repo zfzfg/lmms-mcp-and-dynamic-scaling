@@ -1,116 +1,53 @@
-# LMMS MCP Protokoll-Spezifikation
+# MCP- und IPC-Vertrag
 
-## Übersicht
+Der Begleitprozess verwendet das offizielle SDK v2, festgeschrieben auf `@modelcontextprotocol/server` 2.3.1. Echte stdio-Referenztests mit `@modelcontextprotocol/client` 2.3.1 decken MCP 2026-07-28 und den Legacy-Pfad 2025-11-25 ab. Discovery benötigt keine LMMS-Verbindung.
 
-Die LMMS-MCP-Integration umfasst zwei Protokollebenen:
-1. **Host <-> Begleitprozess:** Standardisiertes Model Context Protocol (MCP) über `stdio`.
-2. **Begleitprozess <-> LMMS:** Internes, versioniertes JSON-RPC über lokalen IPC (Windows Named Pipe / Unix Domain Socket).
+## Gemeinsame Schemata
 
----
+`tools/mcp/src/tools/index.ts` und `tools/mcp/src/contracts.ts` definieren Toolargumente, Ergebnisse und Änderungsbefehle. `npm --prefix tools/mcp run contracts` exportiert die versionierten Fixtures:
 
-## 1. Host-Protokoll (MCP über stdio)
+- [Toolargumente](schemas/mcp-tools-input.schema.json)
+- [Toolergebnisse](schemas/mcp-tools-output.schema.json)
+- [Änderungsbefehle](schemas/mcp-commands.schema.json)
 
-### Unterstützte Revisionen
-- **2026-07-28 (Latest):** Unterstützt `server/discover`, Request-Metadaten, Typisierung.
-- **2025-11-25 (Legacy):** Vollständig abwärtskompatibel mit `initialize` und `notifications/initialized`.
+CMake bettet dieselben Argument-/Befehlsschemata in den nativen Validator ein. Unbekannte Felder/Befehle, falsche Typen und ungültige Werte werden abgelehnt. Alle 22 Tools veröffentlichen `inputSchema`, `outputSchema` und Annotationen; Domainfehler liefern `isError`, Text und strukturiertes `{ok:false,error:{code,message,retryable}}`.
 
-### Tools (Übersicht)
-| Tool | Modus | Zweck |
-| --- | --- | --- |
-| `lmms_get_status` | Read | Abfrage von Version, Instanz-ID, Bereitschaft und Rechten |
-| `lmms_get_project` | Read | Metadaten, Tempo, Taktart, Dirty-Flag, Revision |
-| `lmms_list_tracks` | Read | Paginierte Liste der Spuren (Song oder PatternStore) |
-| `lmms_list_clips` | Read | Paginierte Liste der Clips in einer Spur |
-| `lmms_get_notes` | Read | Noten eines Clips mit clipRevision und kurzlebigen Referenzen |
-| `lmms_list_parameters` | Read | Registrierte Kernparameter eines Objekts |
-| `lmms_list_instruments` | Read | Verfügbare interne Synthesizer- und Plugin-Deskriptoren |
-| `lmms_get_mixer` | Read | Mixerkanäle, Routing und Sends |
-| `lmms_preview_changes` | Read/Plan | Validiert Änderungssatz und erzeugt gebundenen `planId` mit Hash |
-| `lmms_apply_changes` | Write | Führt einen vorbereiteten Plan atomar aus (mit `operationKey`) |
-| `lmms_set_transport` | Action | Steuert Transport (`play`, `pause`, `stop`, `seek`) |
-| `lmms_undo` | Action | Macht die letzte Journalgruppe rückgängig |
-| `lmms_redo` | Action | Wiederholt die rückgängig gemachte Journalgruppe |
-| `lmms_get_operation` | Read | Abfrage des Status eines zuvor ausgeführten `operationKey` |
-| `lmms_create_instrument_track`| Write | Erstellt eine neue Spur mit internem Instrument |
-| `lmms_load_asset` | Action | Lädt katalogisiertes Preset oder Sample |
-| `lmms_save_project_copy` | Action | Speichert Projektkopie im Exportordner |
-| `lmms_start_render` | Action | Startet asynchronen Snapshot-Renderjob |
-| `lmms_get_job` | Read | Status und Artefaktmetadaten eines Jobs |
-| `lmms_cancel_job` | Action | Bricht einen laufenden Renderjob ab |
+Neben Projekt-, Spur-, Clip-, Noten-, Parameter-, Instrument- und Mixerabfragen gibt es Assetkatalog und Automation. Produktionsänderungen erfolgen über Preview/Apply oder die dedizierten Instrument-/Assetaktionen. Die vollständigen Argumente stehen in den Schemata; das vermeidet auseinanderlaufende Kopien dieses Vertrags.
 
-### Ressourcen
-- `lmms://instances/{instanceId}/projects/{projectId}/summary`
-- `lmms://instances/{instanceId}/projects/{projectId}/tracks/{trackId}`
-- `lmms://instances/{instanceId}/projects/{projectId}/clips/{clipId}/summary`
-- `lmms://instances/{instanceId}/capabilities`
-- `lmms://instances/{instanceId}/artifacts/{artifactId}`
+## Instanz, Projekt und Historie
 
----
+Die Verbindungsdatei enthält `instanceId`, die tatsächliche `endpoint`-Adresse, `authToken`, `bridgeVersion` und `ipcProtocolVersion: "1.0"`. Der Client wählt diese Datei ausdrücklich. Er führt parallele Verbindungsversuche zusammen und setzt Empfangspuffer beim Reconnect zurück.
 
-## 2. Internes IPC-Protokoll (Begleitprozess <-> LMMS)
+Schreibende Tools verlangen `operationKey`, `projectId` und `expectedRevision`; Jobabbruch benötigt seinen Operationsschlüssel und Job-ID. Preview bindet seinen Plan an Projekt, Revision, Hash und aktuelle Freigabe. Undo/Redo benötigen außerdem `undoGroupId` als erwarteten Kopf des jeweiligen Stacks. Neu/Laden/Recovery invalidiert Projektgeneration, Handles, Notenreferenzen und Pläne.
 
-### Framing
-Jede Nachricht besteht aus:
-- **Header:** 4 Bytes vorzeichenloser 32-Bit Integer (Big-Endian) für die Frame-Länge in Bytes.
-- **Payload:** UTF-8-kodierter JSON-String der exakten Header-Länge.
-- **Maximale Frame-Größe:** 1.048.576 Bytes (1 MiB). Größere Frames werden mit Fehler verworfen und die Verbindung getrennt.
+Pagination verwendet undurchsichtige Cursor, gebunden an Projekt, Revision, Abfrage und Index. Sie sind keine numerischen Offsets. Ungültige/veraltete Cursor werden abgelehnt.
 
-### Handshake
-Nach dem Verbindungsaufbau sendet der Client als ersten Frame:
+Ressourcen prüfen Instanz und, soweit projektbezogen, Projektidentität. Unterstützt werden Projektübersicht, Spur, Clipübersicht, Fähigkeiten und WAV-Artefakte. Ressourcen verwenden dieselben nativen Rechteprüfungen wie Tools. Artefakte tragen Projektrevision, SHA-256 und tatsächliche WAV-Metadaten.
+
+## IPC 1.0
+
+Jeder Frame besteht aus vier Bytes Big-Endian-Länge und genau dieser Anzahl UTF-8-JSON-Bytes (maximal 1 MiB). Ein Handshake muss vor Domainaufrufen erfolgreich sein:
+
 ```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "auth.handshake",
-  "params": {
-    "clientVersion": "1.0.0",
-    "ipcProtocolVersion": "1.0",
-    "instanceId": "inst_7f42",
-    "authToken": "a8f3b49c..."
-  }
-}
+{"jsonrpc":"2.0","id":1,"method":"auth.handshake","params":{"ipcProtocolVersion":"1.0","clientVersion":"1.1.0","instanceId":"inst_UUID","authToken":"SECRET","requestedPermissions":["read"]}}
 ```
 
-Antwort von LMMS:
+Ohne `requestedPermissions` wird das native Profil angefordert. Nur eine Verbindung mit `write_project` wird zugelassen. Maximal acht Verbindungen, 64 ausstehende Anfragen je Verbindung und 64 wartende Domainaufträge gelten. Ein Handshake muss innerhalb des nativen Zeitlimits fertig werden.
+
 ```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "ok": true,
-    "instanceId": "inst_7f42",
-    "bridgeVersion": "1.3.0-alpha",
-    "permissions": ["read", "write_project", "export"],
-    "ready": true
-  }
-}
+{"jsonrpc":"2.0","id":2,"method":"domain.call","params":{"action":"get_project","payload":{},"deadlineMs":5000}}
 ```
 
-### Request-Format
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "method": "domain.call",
-  "params": {
-    "action": "preview_changes",
-    "deadlineMs": 5000,
-    "payload": {
-      "projectId": "proj_123",
-      "expectedRevision": 42,
-      "changes": [...]
-    }
-  }
-}
-```
+Mutationen tragen `operationKey` im Envelope; ein optionaler Schlüssel im Payload muss übereinstimmen. Bei `get_operation` steht der **gesuchte** Schlüssel ausschließlich im Payload und reserviert keinen neuen Auftrag. Deadlines sind 1–30000 ms einschließlich Queuezeit; die Rechte und Verbindungsgültigkeit werden unmittelbar vor Ausführung erneut geprüft.
 
-### Fehlerbehandlung
-Standardisierte Domänenfehler:
-- `NOT_CONNECTED`: LMMS ist nicht erreichbar.
-- `NOT_READY`: LMMS ist noch in der Initialisierung oder beendet sich.
-- `PERMISSION_DENIED`: Fehlende Rechte für die angeforderte Aktion.
-- `WRITER_BUSY`: Eine andere Schreiboperation oder exklusiver Lock ist aktiv.
-- `REVISION_CONFLICT`: Das Projekt wurde zwischen Vorschau und Anwendung geändert.
-- `VALIDATION_ERROR`: Ungültige Parameter oder Notenwerte außerhalb 0..127.
-- `PLAYBACK_ACTIVE`: Strukturelle Änderungen sind während der Wiedergabe gesperrt.
-- `PATH_NOT_ALLOWED`: Pfad liegt außerhalb freigegebener Verzeichnisse.
+Schlüssel werden vor dem Einreihen reserviert. Gleiche Argumente teilen Auftrag/Ergebnis; andere Argumente erzeugen `OPERATION_KEY_REUSED`. Laufende und höchstens 1024 innerhalb der letzten 24 Stunden bestätigte Ergebnisse bleiben in derselben LMMS-Instanz erhalten; ist das Register voll, werden neue Aufträge abgelehnt. Das Register ist kein persistentes Protokoll über einen LMMS-Neustart hinweg. Ein Companion-Neustart kann Ergebnisse derselben laufenden Instanz weiter abfragen. Ergebnisabfragen verlangen auch die Rechte der ursprünglichen Aktion.
+
+## Rendering und Limits
+
+Änderungspläne enthalten maximal 64 Befehle und 512 betroffene Noten. Snapshot-Ressourcen sind auf 2000 Einträge, 64 MiB je Datei und 256 MiB insgesamt begrenzt. Ressourcen werden im isolierten Worker kopiert und gehasht; Änderungen seit Vorbereitung führen zum Fehler. Worker starten mit eigener Konfiguration und `--no-mcp`.
+
+Rendering bietet derzeit WAV-Mixdown mit 16/24/32 Bit und 8000–192000 Hz. Höchstens zwei Worker und 128 Jobs sind zugelassen; das Workerbudget beträgt zehn Minuten. Startfehler, Absturz, Abbruch, Timeout und ungültige WAVs sind terminale Fehlerzustände. Die WAV-Prüfung kontrolliert RIFF, Format, Kanäle, Samplerate, Bittiefe, Blockausrichtung, Datenmenge und plausible Dauer. Ein bestehendes Exportziel wird nie ersetzt.
+
+Artefaktdaten sind auf 256 KiB Rohdaten je IPC-Chunk und 16 MiB pro Ressourcenabruf begrenzt. Der Companion prüft die zusammengesetzte Prüfsumme. Größere verifizierte Exporte bleiben als lokale Dateien nutzbar. Stem-Rendering wird nicht als verfügbar angeboten; dessen eigene Routing-/Muteabnahme steht noch aus.
+
+Nachweise und verbleibende Freigabegates: [Implementierungsstatus](implementation-status.md).

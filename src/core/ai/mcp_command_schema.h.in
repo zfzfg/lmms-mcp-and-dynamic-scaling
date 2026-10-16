@@ -1,0 +1,4 @@
+#pragma once
+inline constexpr char McpCommandSchema[] = R"LMMSMCP(@MCP_COMMAND_SCHEMA@)LMMSMCP";
+
+inline constexpr char McpToolInputSchema[] = R"LMMSMCP(@MCP_TOOL_INPUT_SCHEMA@)LMMSMCP";

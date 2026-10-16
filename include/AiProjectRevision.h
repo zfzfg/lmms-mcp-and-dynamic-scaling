@@ -1,22 +1,21 @@
 #ifndef LMMS_AI_PROJECT_REVISION_H
 #define LMMS_AI_PROJECT_REVISION_H
 
+#include <QHash>
+#include <QMutex>
 #include <QObject>
 #include <QString>
-#include <QMutex>
-#include <QHash>
+#include <atomic>
 #include <cstdint>
 
 #include "lmms_export.h"
 
-namespace lmms
-{
+namespace lmms {
 class Song;
 class TrackContainer;
-}
+} // namespace lmms
 
-namespace lmms::ai
-{
+namespace lmms::ai {
 
 class LMMS_EXPORT AiProjectRevision : public QObject
 {
@@ -34,12 +33,15 @@ public:
 
 	void attachToSong(Song* song);
 	void detach();
+	void beginEdit() { ++m_editDepth; }
+	void endEdit(bool changed);
 
 signals:
 	void revisionChanged(uint64_t newRevision, const QString& reason);
 
 public slots:
 	void onModelModified();
+	void onParameterModified();
 	void onTrackStructureChanged();
 
 private:
@@ -52,6 +54,8 @@ private:
 	QHash<QString, uint64_t> m_clipRevisions;
 
 	Song* m_attachedSong{nullptr};
+	int m_editDepth{0};
+	std::atomic_bool m_notificationPending{false};
 };
 
 } // namespace lmms::ai

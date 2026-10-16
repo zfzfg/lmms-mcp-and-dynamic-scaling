@@ -1,10 +1,18 @@
 #include "AiParameterRegistry.h"
-#include "Song.h"
-#include "AutomatableModel.h"
-#include <algorithm>
 
-namespace lmms::ai
-{
+#include <algorithm>
+#include <cmath>
+
+#include "AiObjectRegistry.h"
+#include "AutomatableModel.h"
+#include "Engine.h"
+#include "InstrumentTrack.h"
+#include "Mixer.h"
+#include "PatternStore.h"
+#include "ProjectJournal.h"
+#include "Song.h"
+
+namespace lmms::ai {
 
 AiParameterRegistry* AiParameterRegistry::instance()
 {
@@ -31,6 +39,41 @@ void AiParameterRegistry::registerBuiltins(Song* song)
 	tempo.unit = "BPM";
 	tempo.isWritable = true;
 	m_bindings.append(tempo);
+	auto add = [this](const QString& owner, const QString& key, AutomatableModel* model, const QString& unit) {
+		ParameterBinding binding;
+		binding.parameterId = "prm_" + owner + "_" + key;
+		binding.ownerId = owner;
+		binding.key = key;
+		binding.displayName = key;
+		binding.model = model;
+		binding.minValue = model->minValue<double>();
+		binding.maxValue = model->maxValue<double>();
+		binding.step = model->step<double>();
+		binding.unit = unit;
+		m_bindings.append(binding);
+	};
+	for (auto* container : {static_cast<TrackContainer*>(song), static_cast<TrackContainer*>(Engine::patternStore())})
+	{
+		if (!container) { continue; }
+		for (auto* track : container->tracks())
+		{
+			if (auto* instrument = dynamic_cast<InstrumentTrack*>(track))
+			{
+				const auto owner = AiObjectRegistry::instance()->registerTrack(track);
+				add(owner, "volume", instrument->volumeModel(), "%");
+				add(owner, "pan", instrument->panningModel(), "%");
+				add(owner, "pitch", instrument->pitchModel(), "cents");
+			}
+		}
+	}
+	if (auto* mixer = Engine::mixer())
+	{
+		for (int i = 0; i < mixer->numChannels(); ++i)
+		{
+			add(AiObjectRegistry::instance()->registerMixerChannel(i), "volume", &mixer->mixerChannel(i)->m_volumeModel,
+				"gain");
+		}
+	}
 }
 
 void AiParameterRegistry::clear()
@@ -49,20 +92,14 @@ QList<ParameterInfo> AiParameterRegistry::listParameters(const QString& ownerId,
 	{
 		bool ok = false;
 		int parsed = cursor.toInt(&ok);
-		if (ok && parsed >= 0)
-		{
-			startIndex = parsed;
-		}
+		if (ok && parsed >= 0) { startIndex = parsed; }
 	}
 
 	int count = 0;
 	for (int i = startIndex; i < m_bindings.size() && count < limit; ++i)
 	{
 		const auto& b = m_bindings[i];
-		if (!ownerId.isEmpty() && b.ownerId != ownerId)
-		{
-			continue;
-		}
+		if (!ownerId.isEmpty() && b.ownerId != ownerId) { continue; }
 
 		ParameterInfo info;
 		info.parameterId = b.parameterId;
@@ -77,10 +114,10 @@ QList<ParameterInfo> AiParameterRegistry::listParameters(const QString& ownerId,
 
 		if (b.model)
 		{
-			if (auto autoModel = dynamic_cast<AutomatableModel*>(b.model))
+			if (auto autoModel = dynamic_cast<AutomatableModel*>(b.model.data()))
 			{
 				info.value = autoModel->value<double>();
-				info.isAutomated = (autoModel->controllerConnection() != nullptr);
+				info.isAutomated = autoModel->isAutomatedOrControlled();
 			}
 		}
 
@@ -95,6 +132,7 @@ DomainError AiParameterRegistry::setParameterValue(const QString& parameterId, d
 {
 	QMutexLocker locker(&m_mutex);
 	DomainError err;
+	if (!std::isfinite(value)) { return {ErrorCode::ValidationError, "Parameter value must be finite."}; }
 
 	for (const auto& b : m_bindings)
 	{
@@ -111,25 +149,31 @@ DomainError AiParameterRegistry::setParameterValue(const QString& parameterId, d
 			{
 				err.code = ErrorCode::ValidationError;
 				err.message = QString("Value %1 out of bounds [%2, %3] for parameter '%4'.")
-					.arg(value).arg(b.minValue).arg(b.maxValue).arg(parameterId);
+								  .arg(value)
+								  .arg(b.minValue)
+								  .arg(b.maxValue)
+								  .arg(parameterId);
 				return err;
 			}
 
-			if (auto autoModel = dynamic_cast<AutomatableModel*>(b.model))
+			if (auto autoModel = dynamic_cast<AutomatableModel*>(b.model.data()))
 			{
-				if (autoModel->controllerConnection() != nullptr)
+				if (autoModel->isAutomatedOrControlled())
 				{
 					err.code = ErrorCode::ParameterControlled;
-					err.message = QString("Parameter '%1' is controlled by an active automation or controller.").arg(parameterId);
+					err.message = QString("Parameter '%1' is controlled by an active automation or controller.")
+									  .arg(parameterId);
 					return err;
 				}
 
-				if (auto intModel = dynamic_cast<IntModel*>(b.model))
+				if (auto intModel = dynamic_cast<IntModel*>(b.model.data()))
 				{
+					Engine::projectJournal()->addJournalCheckPoint(intModel);
 					intModel->setValue(static_cast<int>(std::round(value)));
 				}
-				else if (auto floatModel = dynamic_cast<FloatModel*>(b.model))
+				else if (auto floatModel = dynamic_cast<FloatModel*>(b.model.data()))
 				{
+					Engine::projectJournal()->addJournalCheckPoint(floatModel);
 					floatModel->setValue(static_cast<float>(value));
 				}
 				return err;
@@ -149,6 +193,7 @@ bool AiParameterRegistry::getParameterInfo(const QString& parameterId, Parameter
 	{
 		if (b.parameterId == parameterId)
 		{
+			if (!b.model) { return false; }
 			outInfo.parameterId = b.parameterId;
 			outInfo.ownerId = b.ownerId;
 			outInfo.key = b.key;
@@ -158,15 +203,25 @@ bool AiParameterRegistry::getParameterInfo(const QString& parameterId, Parameter
 			outInfo.step = b.step;
 			outInfo.unit = b.unit;
 			outInfo.isWritable = b.isWritable;
-			if (auto autoModel = dynamic_cast<AutomatableModel*>(b.model))
+			if (auto autoModel = dynamic_cast<AutomatableModel*>(b.model.data()))
 			{
 				outInfo.value = autoModel->value<double>();
-				outInfo.isAutomated = (autoModel->controllerConnection() != nullptr);
+				outInfo.isAutomated = autoModel->isAutomatedOrControlled();
 			}
 			return true;
 		}
 	}
 	return false;
+}
+
+AutomatableModel* AiParameterRegistry::model(const QString& id) const
+{
+	QMutexLocker lock(&m_mutex);
+	for (const auto& binding : m_bindings)
+	{
+		if (binding.parameterId == id) { return dynamic_cast<AutomatableModel*>(binding.model.data()); }
+	}
+	return nullptr;
 }
 
 } // namespace lmms::ai

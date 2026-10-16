@@ -22,18 +22,43 @@
  *
  */
 
-#include <cstdlib>
-#include <QDomElement>
-
 #include "ProjectJournal.h"
+
+#include <QDomElement>
+#include <cstdlib>
+
+#include "AutomationClip.h"
+#include "ControllerConnection.h"
 #include "Engine.h"
 #include "JournallingObject.h"
-#include "lmms_math.h"
+#include "PatternStore.h"
 #include "Song.h"
-#include "AutomationClip.h"
+#include "lmms_math.h"
+#ifdef LMMS_HAVE_MCP
+#include <QCoreApplication>
+#include <QThread>
+
+#include "AiObjectRegistry.h"
+#include "AiProjectRevision.h"
+#endif
 
 namespace lmms
 {
+
+#ifdef LMMS_HAVE_MCP
+namespace {
+struct JournalRevisionGuard
+{
+	bool changed{false};
+	JournalRevisionGuard() { ai::AiProjectRevision::instance()->beginEdit(); }
+	~JournalRevisionGuard()
+	{
+		if (changed) { ai::AiObjectRegistry::instance()->invalidateAll(); }
+		ai::AiProjectRevision::instance()->endEdit(changed);
+	}
+};
+} // namespace
+#endif
 
 //! Avoid clashes between loaded IDs (have the bit cleared)
 //! and newly created IDs (have the bit set)
@@ -50,13 +75,25 @@ ProjectJournal::ProjectJournal() :
 {
 }
 
-
-
+void ProjectJournal::saveJournalScope(JournallingObject* object, DataFile& data, bool normalized)
+{
+	object->saveState(data, data.content());
+	if (!normalized || object != Engine::getSong()) { return; }
+	// Song PatternTracks embed the independent PatternStore in normal project files.
+	// Grouped history captures that owner separately and restores Song before PatternStore.
+	auto containers = data.elementsByTagName("trackcontainer");
+	for (int i = containers.size() - 1; i >= 0; --i)
+	{
+		auto element = containers.at(i).toElement();
+		if (element.attribute("type") == "patternstore") { element.parentNode().removeChild(element); }
+	}
+}
 
 void ProjectJournal::beginJournalGroup( const QString & name, const QString & groupId )
 {
 	JournalEntry entry;
 	entry.name = name;
+	entry.normalized = true;
 	entry.groupId = groupId.isEmpty() ? QString("undo_%1").arg(fastRand(), 0, 16) : groupId;
 	m_openGroup = entry;
 }
@@ -75,6 +112,7 @@ void ProjectJournal::endJournalGroup()
 	{
 		m_redoEntries.clear();
 		m_undoEntries.push( std::move( entry ) );
+		enforceMemoryBudget();
 		if( m_undoEntries.size() > MAX_UNDO_STATES )
 		{
 			m_undoEntries.remove( 0, m_undoEntries.size() - MAX_UNDO_STATES );
@@ -84,7 +122,27 @@ void ProjectJournal::endJournalGroup()
 
 void ProjectJournal::cancelJournalGroup()
 {
+	if (!m_openGroup) { return; }
+	auto entry = std::move(*m_openGroup);
 	m_openGroup = std::nullopt;
+	const bool previous = isJournalling();
+	setJournalling(false);
+	for (int i = 0; i < entry.checkpoints.size(); ++i)
+	{
+		const auto& cp = entry.checkpoints.at(i);
+		if (auto* object = m_joIDs.value(cp.joID, nullptr))
+		{
+			object->restoreState(cp.data.content().firstChildElement());
+		}
+	}
+	ControllerConnection::finalizeConnections();
+	AutomationClip::resolveAllIDs();
+	setJournalling(previous);
+}
+
+QString ProjectJournal::currentRedoGroupId() const
+{
+	return m_redoEntries.isEmpty() ? QString() : m_redoEntries.top().groupId;
 }
 
 QString ProjectJournal::currentUndoGroupId() const
@@ -98,12 +156,16 @@ QString ProjectJournal::currentUndoGroupId() const
 
 void ProjectJournal::undo()
 {
+#ifdef LMMS_HAVE_MCP
+	JournalRevisionGuard revision;
+#endif
 	while( !m_undoEntries.isEmpty() )
 	{
 		JournalEntry entry = m_undoEntries.pop();
 		JournalEntry redoEntry;
 		redoEntry.name = entry.name;
 		redoEntry.groupId = entry.groupId;
+		redoEntry.normalized = entry.normalized;
 
 		bool anyRestored = false;
 		bool hasAutomationClips = false;
@@ -115,7 +177,8 @@ void ProjectJournal::undo()
 			if( jo )
 			{
 				DataFile curState( DataFile::Type::JournalData );
-				jo->saveState( curState, curState.content() );
+				saveJournalScope(jo, curState, entry.normalized);
+				redoEntry.bytes += curState.toByteArray().size();
 				redoEntry.checkpoints.append( CheckPoint( c.joID, curState ) );
 			}
 		}
@@ -123,10 +186,10 @@ void ProjectJournal::undo()
 		bool prev = isJournalling();
 		setJournalling( false );
 
-		// Restore checkpoints in reverse order
+		// Normalized groups restore owners before independent dependent scopes; legacy entries retain reverse order.
 		for( int i = entry.checkpoints.size() - 1; i >= 0; --i )
 		{
-			const CheckPoint & c = entry.checkpoints.at( i );
+			const CheckPoint& c = entry.checkpoints.at(entry.normalized ? entry.checkpoints.size() - 1 - i : i);
 			JournallingObject * jo = m_joIDs.value( c.joID, nullptr );
 			if( jo )
 			{
@@ -143,10 +206,15 @@ void ProjectJournal::undo()
 
 		if( anyRestored )
 		{
+#ifdef LMMS_HAVE_MCP
+			revision.changed = true;
+#endif
 			m_redoEntries.push( std::move( redoEntry ) );
+			enforceMemoryBudget();
 			Engine::getSong()->setModified();
 			if( hasAutomationClips )
 			{
+				ControllerConnection::finalizeConnections();
 				AutomationClip::resolveAllIDs();
 			}
 			break;
@@ -158,12 +226,16 @@ void ProjectJournal::undo()
 
 void ProjectJournal::redo()
 {
+#ifdef LMMS_HAVE_MCP
+	JournalRevisionGuard revision;
+#endif
 	while( !m_redoEntries.isEmpty() )
 	{
 		JournalEntry entry = m_redoEntries.pop();
 		JournalEntry undoEntry;
 		undoEntry.name = entry.name;
 		undoEntry.groupId = entry.groupId;
+		undoEntry.normalized = entry.normalized;
 
 		bool anyRestored = false;
 		bool hasAutomationClips = false;
@@ -175,7 +247,8 @@ void ProjectJournal::redo()
 			if( jo )
 			{
 				DataFile curState( DataFile::Type::JournalData );
-				jo->saveState( curState, curState.content() );
+				saveJournalScope(jo, curState, entry.normalized);
+				undoEntry.bytes += curState.toByteArray().size();
 				undoEntry.checkpoints.append( CheckPoint( c.joID, curState ) );
 			}
 		}
@@ -202,14 +275,39 @@ void ProjectJournal::redo()
 
 		if( anyRestored )
 		{
+#ifdef LMMS_HAVE_MCP
+			revision.changed = true;
+#endif
 			m_undoEntries.push( std::move( undoEntry ) );
+			enforceMemoryBudget();
 			Engine::getSong()->setModified();
 			if( hasAutomationClips )
 			{
+				ControllerConnection::finalizeConnections();
 				AutomationClip::resolveAllIDs();
 			}
 			break;
 		}
+	}
+}
+
+void ProjectJournal::enforceMemoryBudget()
+{
+	constexpr qint64 budget = 128LL * 1024 * 1024;
+	qint64 bytes = 0;
+	for (const auto& entry : m_undoEntries)
+	{
+		bytes += entry.bytes;
+	}
+	for (const auto& entry : m_redoEntries)
+	{
+		bytes += entry.bytes;
+	}
+	while (bytes > budget && (!m_undoEntries.isEmpty() || !m_redoEntries.isEmpty()))
+	{
+		auto& entries = m_undoEntries.isEmpty() ? m_redoEntries : m_undoEntries;
+		bytes -= entries.first().bytes;
+		entries.remove(0);
 	}
 }
 
@@ -229,8 +327,15 @@ void ProjectJournal::addJournalCheckPoint( JournallingObject *jo )
 {
 	if( isJournalling() && jo )
 	{
+#ifdef LMMS_HAVE_MCP
+		if (!m_openGroup && QCoreApplication::instance()
+			&& QThread::currentThread() == QCoreApplication::instance()->thread())
+		{
+			ai::AiProjectRevision::instance()->bumpRevision("manual_journal_checkpoint");
+		}
+#endif
 		DataFile dataFile( DataFile::Type::JournalData );
-		jo->saveState( dataFile, dataFile.content() );
+		saveJournalScope(jo, dataFile, m_openGroup.has_value());
 		CheckPoint cp( jo->id(), dataFile );
 
 		if( m_openGroup.has_value() )
@@ -243,15 +348,19 @@ void ProjectJournal::addJournalCheckPoint( JournallingObject *jo )
 					return; // Keep original state before mutations began
 				}
 			}
+			m_openGroup->bytes += dataFile.toByteArray().size();
 			m_openGroup->checkpoints.append( std::move( cp ) );
+			if (jo == Engine::getSong() && Engine::patternStore()) { addJournalCheckPoint(Engine::patternStore()); }
 		}
 		else
 		{
 			m_redoEntries.clear();
 			JournalEntry entry;
 			entry.groupId = QString("undo_%1").arg(fastRand(), 0, 16);
+			entry.bytes = dataFile.toByteArray().size();
 			entry.checkpoints.append( std::move( cp ) );
 			m_undoEntries.push( std::move( entry ) );
+			enforceMemoryBudget();
 			if( m_undoEntries.size() > MAX_UNDO_STATES )
 			{
 				m_undoEntries.remove( 0, m_undoEntries.size() - MAX_UNDO_STATES );

@@ -43,6 +43,7 @@ public:
 			const QString & file,
 			AudioEngine* audioEngine );
 	~AudioFileWave() override;
+	bool finalize() override;
 
 	static AudioFileDevice * getInst( const QString & outputFilename,
 					  OutputSettings const & outputSettings,

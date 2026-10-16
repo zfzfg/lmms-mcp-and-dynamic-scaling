@@ -8,6 +8,7 @@ import { ErrorCode, LmmsBridgeError } from "../src/errors.js";
 
 describe("BridgeClient IPC and Framing", () => {
   let mockServer: net.Server;
+  let connections = 0;
   let pipeName: string;
   let socketPath: string;
 
@@ -18,6 +19,7 @@ describe("BridgeClient IPC and Framing", () => {
       : path.join(os.tmpdir(), `${pipeName}.sock`);
 
     mockServer = net.createServer((sock) => {
+      connections++;
       let buffer = Buffer.alloc(0);
 
       sock.on("data", (chunk) => {
@@ -37,6 +39,7 @@ describe("BridgeClient IPC and Framing", () => {
               result: {
                 ok: true,
                 instanceId: req.params.instanceId,
+                ipcProtocolVersion: "1.0",
                 permissions: ["read", "write_project"]
               }
             };
@@ -77,7 +80,7 @@ describe("BridgeClient IPC and Framing", () => {
   test("connects, handshakes and executes domain.call successfully", async () => {
     const config: ConnectionConfig = {
       instanceId: "inst_test_1",
-      endpoint: pipeName,
+      endpoint: socketPath,
       authToken: "secret123"
     };
 
@@ -91,4 +94,22 @@ describe("BridgeClient IPC and Framing", () => {
 
     client.close();
   });
+  test("parallel first calls share a single authenticated connection", async () => {
+    const before = connections;
+    const client = new BridgeClient({ instanceId: "parallel", endpoint: socketPath, authToken: "test" });
+    try {
+      const results = await Promise.all(Array.from({ length: 12 }, (_, index) => client.call("get_status", { index })));
+      assert.strictEqual(connections - before, 1);
+      for (let i = 0; i < results.length; i++) assert.strictEqual(results[i].echo.index, i);
+    } finally { client.close(); }
+  });
+  test("closing rejects pending calls and allows reconnect", async () => {
+    const client = new BridgeClient({ instanceId: "reconnect", endpoint: socketPath, authToken: "test" });
+    await client.connect();
+    const pending = client.call("get_status"); client.close();
+    await assert.rejects(pending, (error: unknown) => error instanceof LmmsBridgeError && error.code === ErrorCode.NotConnected);
+    const result = await client.call("get_status", { reconnected: true });
+    assert.strictEqual(result.echo.reconnected, true); client.close();
+  });
+
 });

@@ -20,7 +20,7 @@ describe("MCP Server Endpoints and Protocol", () => {
     assert.ok(mcpServer, "Server initialized");
 
     // Test tool list completeness
-    assert.strictEqual(TOOLS.length, 20);
+    assert.strictEqual(TOOLS.length, 22);
 
     // Call tool directly through tool handler
     const statusTool = TOOLS.find((t) => t.name === "lmms_get_status")!;

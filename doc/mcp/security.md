@@ -1,41 +1,17 @@
-# Sicherheitskonzept für LMMS MCP
+# Sicherheitsgrenzen der MCP-Bridge
 
-## 1. Bedrohungsmodell und Annahmen
+Die Bridge ist ein lokaler Zugang zur laufenden LMMS-Instanz. Ihre Verbindungsdatei enthält ein Secret. Prozesse desselben angemeldeten Benutzers sind keine voneinander isolierten Sicherheitsdomänen; die Bridge schafft keine Sandbox gegen einen bereits kompromittierten Benutzeraccount.
 
-LMMS wird als Desktop-Software lokal auf dem Benutzerrechner ausgeführt. Die MCP-Schnittstelle dient der kontrollierten Steuerung durch KI-Modelle.
-Es gelten folgende Bedrohungsannahmen:
-- **Unberechtigte Fremdprozesse:** Andere lokale Prozesse oder Netzwerkdienste dürfen sich nicht unberechtigt auf die LMMS-Bridge aufschalten.
-- **Fehlgeleitete oder bösartige LLM-Anweisungen:** Ein LLM (z.B. durch Prompt Injection in Songtexten oder Projektkommentaren) darf kein unkontrolliertes Ausführen von Schadcode, kein Überschreiben beliebiger Systemdateien und keine Endlosschleifen im Audiothread verursachen.
+Der lokale Server verwendet `QLocalServer::UserAccessOption`, eine zufällige Instanzidentität und ein pro Start erneuertes Token. Verbindungsdateien werden vor dem Schreiben des Secrets auf Besitzerzugriff beschränkt (Unix 0600, Windows geschützte Benutzer-DACL) und atomar ohne Ersetzen veröffentlicht. Beenden entfernt nur die zur eigenen Instanz passende Datei. Die tatsächliche Qt-Endpunktadresse wird veröffentlicht.
 
-## 2. Schutzmaßnahmen
+Native Profile bestehen aus `read`, `write_project`, `assets` und `export`. Standardmäßig bleiben die im Fork vorgesehenen Rechte aktiv. `manage_files` ist reserviert und eröffnet keinen unbeschränkten Dateizugriff. Die Verbindungseinstellungen zeigen den aktuellen Zustand; Änderungen widerrufen bestehende Sessions und Pläne. Der Handshake kann ein kleineres Profil anfordern, insbesondere `--read-only`. Nur eine Schreibverbindung ist erlaubt. Verbindungsgültigkeit, aktuelle Rechte, Deadline und Projektbindung werden vor der Ausführung erneut geprüft.
 
-### 2.1 Authentifizierung & Instanzbindung
-- Jede LMMS-Instanz generiert beim Start eine zufällige GUID (`instanceId`) und ein kryptografisches Secret (`authToken`, 32 Bytes hex / CSPRNG).
-- Dieses Token wird in einer temporären Verbindungsdatei gespeichert, deren Zugriffsrechte auf den aktuellen Betriebssystem-Benutzer beschränkt sind.
-- Die lokale Named Pipe (`\\.\pipe\lmms-mcp-<instanceId>`) bzw. der Unix-Socket wird mit `QLocalServer::UserAccessOption` erstellt.
-- Verbindungsversuche ohne gültiges Token werden sofort geschlossen.
+IPC läuft im eigenen Thread. Modelloperationen laufen im Anwendungsthread; Antworten verwenden schwache QObject-Handles und einen Session-Gültigkeitszustand. Beim Shutdown werden neue Aufträge gesperrt, wartende verworfen und Renderworker beendet. Limits schützen Frames, Puffer, Verbindungen, wartende Anfragen, Operationsregister, Pläne, Notenbatches und Jobs; siehe [Protokollvertrag](protocol.md).
 
-### 2.2 Berechtigungsprofile (Permissions)
-LMMS erzwingt Berechtigungsprüfungen nativ im Hauptthread vor jeder Operation:
-1. `read`: Projektstatus, Spuren, Clips, Noten und Mixer lesen.
-2. `write_project`: Erstellen von MIDI-Clips, Notenänderungen, Parametereinstellungen im geöffneten Projekt.
-3. `assets`: Zugriff auf freigegebene Sample- und Preset-Kataloge.
-4. `export`: Speichern von Projektkopien und Rendern von Audio in dedizierten Exportverzeichnissen.
-5. `manage_files`: Datei überschreiben / Projekt neu öffnen (gesondert abzusichern).
+Assets werden ausschließlich über undurchsichtige Katalog-IDs aus den konfigurierten Benutzer-Preset-/Samplebibliotheken geladen. Pfade und Metadaten werden erneut geprüft. XML und interne Pluginfreigabe werden vor dem Laden validiert; externe Plugins werden über diesen Ladepfad nicht freigegeben. Ein fehlgeschlagener Instrumentaufbau wird zurückgerollt.
 
-### 2.3 Dateisystem-Richtlinie (AiFilePolicy)
-- Zugriff ist ausschließlich auf explizit freigegebene Verzeichnisse (Projektordner, Sample-Bibliotheken, Export-Ordner) beschränkt.
-- Alle Pfade werden vor Zugriff kanonisiert (`std::filesystem::canonical` / `QFileInfo::canonicalFilePath`).
-- Erkennung und Verweigerung von:
-  - Directory Traversal (`..`)
-  - Symlinks / Reparse Points / Windows Junctions außerhalb des Zielbaums
-  - Ungültigen Windows-Gerätenamen (`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`)
-  - Alternate Data Streams (`file.txt:stream`)
-- Standardmäßig wird kein Überschreiben existierender Dateien ohne atomare Publish-Prüfung zugelassen.
+Projektkopien und Exporte erhalten neue Namen im freigegebenen Exportverzeichnis. Pfadkomponenten, Windows-Sondernamen/ADS und kanonische Wurzeln werden geprüft. Bei Veröffentlichung wird der tatsächlich geöffnete Zielhandle beziehungsweise Verzeichnisdeskriptor verifiziert und exklusiv neu angelegt; vorhandene Ziele werden nicht verändert. Die eigene temporäre Datei wird bei einem Fehler entfernt. Snapshot-Ressourcen werden privat kopiert und gehasht. Diese Grenzen sind Teil der Tests; plattformübergreifende Junction-/Race-Abnahme ist noch offen.
 
-### 2.4 Audiothread-Schutz & DoS-Prävention
-- JSON-Parsing, Dateisystemprüfungen und Validierungen finden ausschließlich im IPC-Thread oder Hauptthread statt.
-- Begrenzte Queue: Maximal 64 ausstehende Befehle; bei Überlastung wird mit `BUSY` abgelehnt.
-- Maximale Batch-Größe: Maximal 64 Befehle bzw. 512 Noten pro Transaktion.
-- Frame-Limit: 1 MiB maximale Nachrichtengröße auf der IPC-Schnittstelle.
-- Absolute Timeouts: Schreiboperationen besitzen eine standardmäßige Deadline von 5 Sekunden.
+Der Companion übermittelt Projekt-/Audiodaten nur an den angeschlossenen MCP-Host. Ob dessen KI-Anbieter Daten extern verarbeitet, hängt vom Host ab. `stdout` ist ausschließlich MCP vorbehalten; Diagnose geht nach `stderr` und in den begrenzten nativen Statuspuffer. Tokens werden nicht geloggt.
+
+Die Integration bietet weder beliebige Skriptausführung noch allgemeine Dateiverwaltung. Vollständige Audio-, Lebensdauer- und Paketabnahme wird erst nach den im [Abnahmenachweis](implementation-status.md) dokumentierten Prüfungen behauptet.

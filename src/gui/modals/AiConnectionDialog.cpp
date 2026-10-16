@@ -1,15 +1,17 @@
 #include "AiConnectionDialog.h"
-#include "AiControlService.h"
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QFormLayout>
-#include <QClipboard>
-#include <QApplication>
-#include <QJsonObject>
-#include <QJsonDocument>
 
-namespace lmms::gui
-{
+#include <QApplication>
+#include <QClipboard>
+#include <QCoreApplication>
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QVBoxLayout>
+
+#include "AiControlService.h"
+
+namespace lmms::gui {
 
 AiConnectionDialog::AiConnectionDialog(QWidget* parent)
 	: QDialog(parent)
@@ -33,11 +35,21 @@ AiConnectionDialog::AiConnectionDialog(QWidget* parent)
 	layout->addLayout(form);
 
 	m_allowWriteCheck = new QCheckBox(tr("Projektbearbeitung durch KI erlauben"), this);
-	m_allowWriteCheck->setChecked(true);
+	m_allowWriteCheck->setChecked(
+		ai::hasPermission(ai::AiControlService::instance()->grantedPermissions(), ai::Permission::WriteProject));
 	layout->addWidget(m_allowWriteCheck);
 
 	m_allowExportCheck = new QCheckBox(tr("Audio-Export durch KI erlauben"), this);
-	m_allowExportCheck->setChecked(true);
+	m_allowExportCheck->setChecked(
+		ai::hasPermission(ai::AiControlService::instance()->grantedPermissions(), ai::Permission::Export));
+	auto updatePermissions = [this] {
+		ai::Permission permissions = ai::Permission::Read | ai::Permission::Assets;
+		if (m_allowWriteCheck->isChecked()) { permissions = permissions | ai::Permission::WriteProject; }
+		if (m_allowExportCheck->isChecked()) { permissions = permissions | ai::Permission::Export; }
+		ai::AiControlService::instance()->setGrantedPermissions(permissions);
+	};
+	connect(m_allowWriteCheck, &QCheckBox::toggled, this, updatePermissions);
+	connect(m_allowExportCheck, &QCheckBox::toggled, this, updatePermissions);
 	layout->addWidget(m_allowExportCheck);
 
 	auto btnLayout = new QHBoxLayout();
@@ -71,7 +83,8 @@ void AiConnectionDialog::updateStatusDisplay()
 	}
 	else
 	{
-		m_statusLabel->setText(tr("<b>Status:</b> Dienst ist derzeit deaktiviert."));
+		m_statusLabel->setText(
+			tr("<b>Status:</b> Dienst ist derzeit deaktiviert.") + " " + svc->lastError().toHtmlEscaped());
 		m_endpointEdit->clear();
 		m_fileEdit->clear();
 		m_toggleBtn->setText(tr("Dienst starten"));
@@ -82,10 +95,7 @@ void AiConnectionDialog::updateStatusDisplay()
 void AiConnectionDialog::onToggleServiceClicked()
 {
 	auto svc = ai::AiControlService::instance();
-	if (svc->isRunning())
-	{
-		svc->stopService();
-	}
+	if (svc->isRunning()) { svc->stopService(); }
 	else
 	{
 		ai::Permission p = ai::Permission::Read | ai::Permission::Assets;
@@ -104,7 +114,11 @@ void AiConnectionDialog::onCopyConfigClicked()
 	if (!svc->isRunning()) { return; }
 
 	QJsonObject mcpServer;
-	mcpServer["command"] = "lmms-mcp";
+#ifdef Q_OS_WIN
+	mcpServer["command"] = QCoreApplication::applicationDirPath() + "/lmms-mcp.exe";
+#else
+	mcpServer["command"] = QCoreApplication::applicationDirPath() + "/lmms-mcp";
+#endif
 	QJsonArray args;
 	args.append("--connection-file");
 	args.append(svc->connectionFilePath());
@@ -117,10 +131,7 @@ void AiConnectionDialog::onCopyConfigClicked()
 
 	QString jsonText = QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented));
 	QClipboard* clip = QApplication::clipboard();
-	if (clip)
-	{
-		clip->setText(jsonText);
-	}
+	if (clip) { clip->setText(jsonText); }
 }
 
 } // namespace lmms::gui

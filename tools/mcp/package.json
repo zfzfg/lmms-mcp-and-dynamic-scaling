@@ -1,6 +1,6 @@
 {
   "name": "lmms-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Model Context Protocol (MCP) companion server for LMMS",
   "type": "module",
   "main": "dist/src/index.js",
@@ -10,17 +10,31 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "test": "node --test dist/test/*.test.js",
-    "start": "node dist/index.js"
+    "test": "npm run build && node scripts/export-contracts.mjs --check && node --test dist/test/*.test.js",
+    "start": "node dist/src/index.js",
+    "package": "node scripts/package.mjs",
+    "contracts": "npm run build && node scripts/export-contracts.mjs"
   },
-  "keywords": ["mcp", "lmms", "daw", "music", "ai"],
+  "keywords": [
+    "mcp",
+    "lmms",
+    "daw",
+    "music",
+    "ai"
+  ],
   "author": "LMMS Developers",
   "license": "GPL-2.0-or-later",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.6.1"
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
     "@types/node": "^22.13.0",
     "typescript": "^5.7.3"
-  }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "lmmsRuntimeVersion": "24.19.0"
 }

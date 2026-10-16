@@ -22,6 +22,11 @@
  *
  */
 
+#include "lmmsconfig.h"
+#ifdef LMMS_HAVE_MCP
+#include "AiObjectRegistry.h"
+#include "AiProjectRevision.h"
+#endif
 #include "Mixer.h"
 
 #include <QDomElement>
@@ -330,6 +335,10 @@ void Mixer::toggledSolo()
 
 void Mixer::deleteChannel( int index )
 {
+#ifdef LMMS_HAVE_MCP
+	ai::AiObjectRegistry::instance()->invalidateMixerChannels();
+	ai::AiProjectRevision::instance()->bumpRevision("mixer_structure_changed");
+#endif
 	// channel deletion is performed between mixer rounds
 	Engine::audioEngine()->requestChangeInModel();
 
@@ -423,6 +432,10 @@ void Mixer::deleteChannel( int index )
 
 void Mixer::moveChannelLeft( int index )
 {
+#ifdef LMMS_HAVE_MCP
+	ai::AiObjectRegistry::instance()->invalidateMixerChannels();
+	ai::AiProjectRevision::instance()->bumpRevision("mixer_structure_changed");
+#endif
 	// can't move master or first channel
 	if (index <= 1 || static_cast<std::size_t>(index) >= m_mixerChannels.size())
 	{
@@ -746,6 +759,10 @@ void Mixer::masterMix( SampleFrame* _buf )
 
 void Mixer::clear()
 {
+#ifdef LMMS_HAVE_MCP
+	ai::AiObjectRegistry::instance()->invalidateMixerChannels();
+	ai::AiProjectRevision::instance()->bumpRevision("mixer_structure_changed");
+#endif
 	while( m_mixerChannels.size() > 1 )
 	{
 		deleteChannel(1);
@@ -835,6 +852,10 @@ void Mixer::allocateChannelsTo(int num)
 
 void Mixer::loadSettings( const QDomElement & _this )
 {
+#ifdef LMMS_HAVE_MCP
+	ai::AiObjectRegistry::instance()->invalidateMixerChannels();
+	ai::AiProjectRevision::instance()->bumpRevision("mixer_structure_changed");
+#endif
 	clear();
 	QDomNode node = _this.firstChild();
 

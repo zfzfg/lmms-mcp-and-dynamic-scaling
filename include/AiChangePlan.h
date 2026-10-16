@@ -1,18 +1,18 @@
 #ifndef LMMS_AI_CHANGE_PLAN_H
 #define LMMS_AI_CHANGE_PLAN_H
 
-#include <QString>
-#include <QJsonArray>
-#include <QJsonObject>
 #include <QDateTime>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QMutex>
+#include <QString>
 #include <memory>
-#include "lmms_export.h"
-#include "AiDomainTypes.h"
 
-namespace lmms::ai
-{
+#include "AiDomainTypes.h"
+#include "lmms_export.h"
+
+namespace lmms::ai {
 
 struct LMMS_EXPORT ChangeCommand
 {
@@ -48,10 +48,8 @@ struct LMMS_EXPORT ChangeCommand
 class LMMS_EXPORT AiChangePlan
 {
 public:
-	AiChangePlan(const QString& planId,
-	             const QString& projectId,
-	             uint64_t expectedRevision,
-	             const std::vector<ChangeCommand>& commands);
+	AiChangePlan(const QString& planId, const QString& projectId, uint64_t expectedRevision,
+		const std::vector<ChangeCommand>& commands);
 
 	QString planId() const { return m_planId; }
 	QString projectId() const { return m_projectId; }
@@ -88,6 +86,7 @@ public:
 	std::shared_ptr<AiChangePlan> lookupPlan(const QString& planId);
 	void removePlan(const QString& planId);
 	void clearExpired();
+	void clear();
 
 private:
 	AiChangePlanManager() = default;

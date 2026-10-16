@@ -1,18 +1,18 @@
 #ifndef LMMS_AI_JOB_MANAGER_H
 #define LMMS_AI_JOB_MANAGER_H
 
-#include <QObject>
-#include <QString>
-#include <QProcess>
-#include <QMutex>
 #include <QHash>
+#include <QMutex>
+#include <QObject>
+#include <QProcess>
+#include <QString>
 #include <memory>
-#include "lmms_export.h"
+
 #include "AiDomainTypes.h"
 #include "AiProjectSnapshot.h"
+#include "lmms_export.h"
 
-namespace lmms::ai
-{
+namespace lmms::ai {
 
 enum class JobState
 {
@@ -36,6 +36,11 @@ struct LMMS_EXPORT JobInfo
 	QString error;
 	QString artifactId;
 	QString artifactPath;
+	QString sha256;
+	qint64 sizeBytes{0};
+	double durationSeconds{0};
+	int sampleRate{44100};
+	int bitDepth{16};
 	SnapshotMetadata snapshot;
 	QString tempOutputFile;
 	QString finalOutputFile;
@@ -51,14 +56,13 @@ class LMMS_EXPORT AiJobManager : public QObject
 public:
 	static AiJobManager* instance();
 
-	DomainError startRenderJob(const QString& outputFileName,
-	                           const QString& format,
-	                           int sampleRate,
-	                           int bitDepth,
-	                           QString& outJobId);
+	DomainError startRenderJob(
+		const QString& outputFileName, const QString& format, int sampleRate, int bitDepth, QString& outJobId);
 
 	bool getJob(const QString& jobId, JobInfo& outInfo) const;
 	DomainError cancelJob(const QString& jobId);
+	void shutdown();
+	QJsonObject readArtifact(const QString& artifactId, qint64 offset, int limit) const;
 
 private slots:
 	void onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
@@ -68,8 +72,6 @@ private slots:
 private:
 	AiJobManager();
 	~AiJobManager() override = default;
-
-	bool validateWavFile(const QString& filePath, QString& outError) const;
 
 	mutable QMutex m_mutex;
 	QHash<QString, JobInfo> m_jobs;

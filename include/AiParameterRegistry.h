@@ -1,22 +1,23 @@
 #ifndef LMMS_AI_PARAMETER_REGISTRY_H
 #define LMMS_AI_PARAMETER_REGISTRY_H
 
-#include <QString>
 #include <QList>
 #include <QMutex>
+#include <QPointer>
+#include <QString>
 #include <memory>
-#include "lmms_export.h"
-#include "AiDomainTypes.h"
 
-namespace lmms
-{
+#include "AiDomainTypes.h"
+#include "Model.h"
+#include "lmms_export.h"
+
+namespace lmms {
 class Model;
 class AutomatableModel;
 class Song;
-}
+} // namespace lmms
 
-namespace lmms::ai
-{
+namespace lmms::ai {
 
 struct ParameterBinding
 {
@@ -24,7 +25,7 @@ struct ParameterBinding
 	QString ownerId;
 	QString key;
 	QString displayName;
-	Model* model{nullptr};
+	QPointer<Model> model;
 	double minValue{0.0};
 	double maxValue{1.0};
 	double step{0.01};
@@ -39,6 +40,7 @@ public:
 
 	void registerBuiltins(Song* song);
 	void clear();
+	AutomatableModel* model(const QString& parameterId) const;
 
 	QList<ParameterInfo> listParameters(const QString& ownerId, const QString& cursor, int limit) const;
 	DomainError setParameterValue(const QString& parameterId, double value);

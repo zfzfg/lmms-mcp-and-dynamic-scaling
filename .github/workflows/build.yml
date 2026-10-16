@@ -25,6 +25,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Set up bundled MCP runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test MCP companion
+        shell: bash
+        run: npm --prefix tools/mcp ci --ignore-scripts && npm --prefix tools/mcp test
       - name: Set up environment
         run: |
           echo "CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)" | tee -a "$GITHUB_ENV"
@@ -118,6 +125,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Set up bundled MCP runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test MCP companion
+        shell: bash
+        run: npm --prefix tools/mcp ci --ignore-scripts && npm --prefix tools/mcp test
       - name: Set up environment
         run: |
           echo "CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)" | tee -a "$GITHUB_ENV"
@@ -213,6 +227,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Set up bundled MCP runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test MCP companion
+        shell: bash
+        run: npm --prefix tools/mcp ci --ignore-scripts && npm --prefix tools/mcp test
       - name: Set up environment
         run: |
           echo "CMAKE_BUILD_PARALLEL_LEVEL=$(sysctl -n hw.logicalcpu)" | tee -a "$GITHUB_ENV"
@@ -305,6 +326,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Set up bundled MCP runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test MCP companion
+        shell: bash
+        run: npm --prefix tools/mcp ci --ignore-scripts && npm --prefix tools/mcp test
       - name: Set up environment
         run: |
           echo "CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)" | tee -a "$GITHUB_ENV"
@@ -374,6 +402,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Set up bundled MCP runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test MCP companion
+        shell: bash
+        run: npm --prefix tools/mcp ci --ignore-scripts && npm --prefix tools/mcp test
       - name: Cache vcpkg dependencies
         id: cache-deps
         uses: actions/cache@v6
@@ -470,6 +505,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+      - name: Set up bundled MCP runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test MCP companion
+        shell: bash
+        run: npm --prefix tools/mcp ci --ignore-scripts && npm --prefix tools/mcp test
       - name: Cache msys2 dependencies
         id: cache-deps
         uses: actions/cache@v6
@@ -481,6 +523,7 @@ jobs:
       - name: Install msys2
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
         with:
+          path-type: inherit
           msystem: CLANGARM64
           update: true
       - name: Install dependencies

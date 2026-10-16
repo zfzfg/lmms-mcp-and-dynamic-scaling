@@ -1,11 +1,13 @@
 #include "AiControlStatus.h"
-#include "AiControlService.h"
-#include "AiConnectionDialog.h"
+
 #include <QHBoxLayout>
 #include <QMouseEvent>
+#include <QTimer>
 
-namespace lmms::gui
-{
+#include "AiConnectionDialog.h"
+#include "AiControlService.h"
+
+namespace lmms::gui {
 
 AiControlStatus::AiControlStatus(QWidget* parent)
 	: QWidget(parent)
@@ -17,6 +19,9 @@ AiControlStatus::AiControlStatus(QWidget* parent)
 	m_label->setCursor(Qt::PointingHandCursor);
 	layout->addWidget(m_label);
 
+	auto* timer = new QTimer(this);
+	connect(timer, &QTimer::timeout, this, &AiControlStatus::updateStatus);
+	timer->start(500);
 	updateStatus();
 }
 

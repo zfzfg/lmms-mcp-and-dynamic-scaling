@@ -1,11 +1,13 @@
 import { test, describe } from "node:test";
 import * as assert from "node:assert";
 import { TOOLS } from "../src/tools/index.js";
+import { fromJsonSchema } from "@modelcontextprotocol/server";
+import { CHANGE_COMMAND_SCHEMA } from "../src/contracts.js";
 import { BridgeClient } from "../src/bridge-client.js";
 
 describe("Tool Definitions and Schemas", () => {
-  test("all 20 tools are defined with valid schemas", () => {
-    assert.strictEqual(TOOLS.length, 20);
+  test("all 22 tools are defined with valid schemas", () => {
+    assert.strictEqual(TOOLS.length, 22);
 
     const expectedTools = [
       "lmms_get_status",
@@ -70,4 +72,15 @@ describe("Tool Definitions and Schemas", () => {
     assert.ok(projRes.content[0].text.includes("Demo Project"));
     assert.ok(projRes.content[0].text.includes("128 BPM"));
   });
+  test("command schemas reject unknown commands, invalid numbers and ambiguous clip references", async () => {
+    const schema = fromJsonSchema(CHANGE_COMMAND_SCHEMA);
+    for (const value of [
+      { kind: "update_notes", clipId: "clip", notes: [] },
+      { kind: "set_tempo", bpm: 120.5 }, { kind: "execute_script", script: "anything" },
+      { kind: "set_track_mute", trackId: "track", muted: "false" },
+      { kind: "add_notes", clip: { clipId: "clip", clientRef: "new" }, notes: [{ midiKey: 60, positionTicks: 0, lengthTicks: 48 }] }
+    ]) assert.ok((await schema["~standard"].validate(value)).issues, JSON.stringify(value));
+    assert.ok(!(await schema["~standard"].validate({ kind: "set_tempo", bpm: 120 })).issues);
+  });
+
 });

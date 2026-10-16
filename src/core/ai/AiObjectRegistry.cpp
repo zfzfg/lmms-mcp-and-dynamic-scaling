@@ -1,10 +1,11 @@
 #include "AiObjectRegistry.h"
-#include "Track.h"
+
+#include "AiProjectRevision.h"
 #include "Clip.h"
 #include "MidiClip.h"
+#include "Track.h"
 
-namespace lmms::ai
-{
+namespace lmms::ai {
 
 AiObjectRegistry* AiObjectRegistry::instance()
 {
@@ -21,6 +22,7 @@ void AiObjectRegistry::invalidateAll()
 {
 	QMutexLocker locker(&m_mutex);
 	m_generation++;
+	m_mixerGeneration++;
 	m_tracksByHandle.clear();
 	m_handlesByTrack.clear();
 	m_clipsByHandle.clear();
@@ -34,19 +36,18 @@ void AiObjectRegistry::invalidateAll()
 QString AiObjectRegistry::registerTrack(Track* track)
 {
 	if (!track) { return QString(); }
+	auto* revision = AiProjectRevision::instance();
 	QMutexLocker locker(&m_mutex);
 
 	if (m_handlesByTrack.contains(track))
 	{
 		QString handle = m_handlesByTrack.value(track);
-		if (m_tracksByHandle.contains(handle) && m_tracksByHandle.value(handle) == track)
-		{
-			return handle;
-		}
+		if (m_tracksByHandle.contains(handle) && m_tracksByHandle.value(handle) == track) { return handle; }
 	}
 
 	QString handle = QString("trk_%1_%2").arg(m_generation).arg(m_nextTrackId++);
 	m_tracksByHandle.insert(handle, track);
+	connect(track, &Model::dataChanged, revision, &AiProjectRevision::onModelModified, Qt::UniqueConnection);
 	m_handlesByTrack.insert(track, handle);
 	return handle;
 }
@@ -54,10 +55,7 @@ QString AiObjectRegistry::registerTrack(Track* track)
 Track* AiObjectRegistry::lookupTrack(const QString& handle) const
 {
 	QMutexLocker locker(&m_mutex);
-	if (!m_tracksByHandle.contains(handle))
-	{
-		return nullptr;
-	}
+	if (!m_tracksByHandle.contains(handle)) { return nullptr; }
 	return m_tracksByHandle.value(handle).data();
 }
 
@@ -71,19 +69,18 @@ QString AiObjectRegistry::findTrackHandle(Track* track) const
 QString AiObjectRegistry::registerClip(Clip* clip)
 {
 	if (!clip) { return QString(); }
+	auto* revision = AiProjectRevision::instance();
 	QMutexLocker locker(&m_mutex);
 
 	if (m_handlesByClip.contains(clip))
 	{
 		QString handle = m_handlesByClip.value(clip);
-		if (m_clipsByHandle.contains(handle) && m_clipsByHandle.value(handle) == clip)
-		{
-			return handle;
-		}
+		if (m_clipsByHandle.contains(handle) && m_clipsByHandle.value(handle) == clip) { return handle; }
 	}
 
 	QString handle = QString("clp_%1_%2").arg(m_generation).arg(m_nextClipId++);
 	m_clipsByHandle.insert(handle, clip);
+	connect(clip, &Model::dataChanged, revision, &AiProjectRevision::onModelModified, Qt::UniqueConnection);
 	m_handlesByClip.insert(clip, handle);
 	return handle;
 }
@@ -91,10 +88,7 @@ QString AiObjectRegistry::registerClip(Clip* clip)
 Clip* AiObjectRegistry::lookupClip(const QString& handle) const
 {
 	QMutexLocker locker(&m_mutex);
-	if (!m_clipsByHandle.contains(handle))
-	{
-		return nullptr;
-	}
+	if (!m_clipsByHandle.contains(handle)) { return nullptr; }
 	return m_clipsByHandle.value(handle).data();
 }
 
@@ -117,7 +111,8 @@ QString AiObjectRegistry::generateNoteRef(const QString& clipHandle, uint64_t cl
 	return QString("nt_%1_%2_%3").arg(clipHandle).arg(clipRev).arg(noteIndex);
 }
 
-bool AiObjectRegistry::parseNoteRef(const QString& noteRef, QString& outClipHandle, uint64_t& outClipRev, int& outNoteIndex) const
+bool AiObjectRegistry::parseNoteRef(
+	const QString& noteRef, QString& outClipHandle, uint64_t& outClipRev, int& outNoteIndex) const
 {
 	// Expected format: nt_<clipHandle>_<clipRev>_<noteIndex>
 	// where clipHandle is e.g. clp_1_2
@@ -140,15 +135,20 @@ bool AiObjectRegistry::parseNoteRef(const QString& noteRef, QString& outClipHand
 	return true;
 }
 
+void AiObjectRegistry::invalidateMixerChannels()
+{
+	QMutexLocker lock(&m_mutex);
+	++m_mixerGeneration;
+	m_mixerChannelByHandle.clear();
+	m_handlesByMixerChannel.clear();
+}
+
 QString AiObjectRegistry::registerMixerChannel(int channelIndex)
 {
 	QMutexLocker locker(&m_mutex);
-	if (m_handlesByMixerChannel.contains(channelIndex))
-	{
-		return m_handlesByMixerChannel.value(channelIndex);
-	}
+	if (m_handlesByMixerChannel.contains(channelIndex)) { return m_handlesByMixerChannel.value(channelIndex); }
 
-	QString handle = QString("mix_%1_%2").arg(m_generation).arg(channelIndex);
+	QString handle = QString("mix_%1_%2").arg(m_mixerGeneration).arg(channelIndex);
 	m_mixerChannelByHandle.insert(handle, channelIndex);
 	m_handlesByMixerChannel.insert(channelIndex, handle);
 	return handle;

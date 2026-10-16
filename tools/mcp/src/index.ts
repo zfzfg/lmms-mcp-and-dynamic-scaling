@@ -9,7 +9,8 @@ Usage:
   lmms-mcp [options]
 
 Options:
-  --connection-file <path>   Path to LMMS connection file (defaults to AppData/LMMS/mcp/connections/studio.json)
+  --connection-file <path>   Choose an instance using its connection file or LMMS_MCP_CONNECTION_FILE
+  --read-only                Request a reader connection without occupying the writer slot
   -h, --help                 Show this help message
   -v, --version              Show version information
 `);
@@ -18,6 +19,7 @@ Options:
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   let connectionFilePath: string | undefined;
+  let readOnly = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -25,8 +27,10 @@ async function main(): Promise<void> {
       printHelp();
       process.exit(0);
     } else if (arg === "--version" || arg === "-v") {
-      process.stderr.write("lmms-mcp version 1.0.0\n");
+      process.stderr.write("lmms-mcp version 1.1.0\n");
       process.exit(0);
+    } else if (arg === "--read-only") {
+      readOnly = true;
     } else if (arg === "--connection-file") {
       if (i + 1 < args.length) {
         connectionFilePath = args[++i];
@@ -34,12 +38,14 @@ async function main(): Promise<void> {
         process.stderr.write("Error: --connection-file requires a file path argument.\n");
         process.exit(1);
       }
+    } else {
+      process.stderr.write(`Unknown argument: ${arg}\n`); process.exit(2);
     }
   }
 
   try {
-    const config = loadConnectionConfig(connectionFilePath);
-    process.stderr.write(`[lmms-mcp] Loaded configuration for instance ${config.instanceId}\n`);
+    const config = () => { const value = loadConnectionConfig(connectionFilePath); if (readOnly) value.requestedPermissions = ["read"]; return value; };
+
 
     const bridgeClient = new BridgeClient(config);
     const mcpServer = new LmmsMcpServer(bridgeClient);
@@ -49,7 +55,7 @@ async function main(): Promise<void> {
     const msg = (err as Error).message || String(err);
     process.stderr.write(`[lmms-mcp] Startup error: ${msg}\n`);
     process.stderr.write(`[lmms-mcp] Make sure LMMS is running and MCP control is active.\n`);
-    process.stderr.write(`[lmms-mcp] Looked for connection file at: ${connectionFilePath || getDefaultConnectionPath()}\n`);
+    process.stderr.write(`[lmms-mcp] Looked for connection file at: ${connectionFilePath || process.env.LMMS_MCP_CONNECTION_FILE || "(no instance selected)"}\n`);
     process.exit(1);
   }
 }

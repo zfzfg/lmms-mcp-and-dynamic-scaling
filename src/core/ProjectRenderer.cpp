@@ -183,6 +183,7 @@ void ProjectRenderer::run()
 
 	Engine::getSong()->stopExport();
 
+	m_succeeded = !m_abort && m_fileDev->finalize();
 	perfLog.end();
 
 	// If the user aborted export-process, the file has to be deleted.

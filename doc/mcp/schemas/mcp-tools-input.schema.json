@@ -1,232 +1,1237 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "LmmsMcpToolsInput",
-  "description": "Schemas for all MCP Tool input parameters in LMMS",
+  "contractVersion": "1.0",
   "definitions": {
-    "GetStatusInput": {
+    "lmms_get_status": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "additionalProperties": false
     },
-    "GetProjectInput": {
+    "lmms_get_project": {
       "type": "object",
       "properties": {
-        "projectId": { "type": "string" }
-      }
+        "projectId": {
+          "type": "string",
+          "description": "Optional expected project ID"
+        }
+      },
+      "additionalProperties": false
     },
-    "ListTracksInput": {
+    "lmms_list_tracks": {
       "type": "object",
       "properties": {
-        "container": { "type": "string", "enum": ["song", "pattern_store"] },
-        "cursor": { "type": "string" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
-      }
-    },
-    "ListClipsInput": {
-      "type": "object",
-      "required": ["trackId"],
-      "properties": {
-        "trackId": { "type": "string" },
-        "startTick": { "type": "integer", "minimum": 0 },
-        "endTick": { "type": "integer", "minimum": 0 },
-        "cursor": { "type": "string" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
-      }
-    },
-    "GetNotesInput": {
-      "type": "object",
-      "required": ["clipId"],
-      "properties": {
-        "clipId": { "type": "string" },
-        "startTick": { "type": "integer", "minimum": 0 },
-        "endTick": { "type": "integer", "minimum": 0 },
-        "cursor": { "type": "string" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
-      }
-    },
-    "ListParametersInput": {
-      "type": "object",
-      "required": ["ownerId"],
-      "properties": {
-        "ownerId": { "type": "string" },
-        "cursor": { "type": "string" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
-      }
-    },
-    "ListInstrumentsInput": {
-      "type": "object",
-      "properties": {
-        "type": { "type": "string" },
-        "cursor": { "type": "string" },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100 }
-      }
-    },
-    "GetMixerInput": {
-      "type": "object",
-      "properties": {
-        "channelIndex": { "type": "integer", "minimum": 0 }
-      }
-    },
-    "GetOperationInput": {
-      "type": "object",
-      "required": ["operationKey"],
-      "properties": {
-        "operationKey": { "type": "string" }
-      }
-    },
-    "GetJobInput": {
-      "type": "object",
-      "required": ["jobId"],
-      "properties": {
-        "jobId": { "type": "string" }
-      }
-    },
-    "NoteChange": {
-      "type": "object",
-      "required": ["positionTicks", "lengthTicks", "midiKey"],
-      "properties": {
-        "noteRef": { "type": "string" },
-        "positionTicks": { "type": "integer", "minimum": 0 },
-        "lengthTicks": { "type": "integer", "minimum": 1 },
-        "midiKey": { "type": "integer", "minimum": 0, "maximum": 127 },
-        "volumePercent": { "type": "integer", "minimum": 0, "maximum": 200, "default": 100 },
-        "pan": { "type": "integer", "minimum": -100, "maximum": 100, "default": 0 },
-        "noteType": { "type": "string", "enum": ["regular", "step"], "default": "regular" }
-      }
-    },
-    "ChangeItem": {
-      "type": "object",
-      "required": ["kind"],
-      "properties": {
-        "kind": {
+        "container": {
           "type": "string",
           "enum": [
-            "set_tempo",
-            "rename_track",
-            "set_track_mute",
-            "set_parameter",
-            "create_midi_clip",
-            "add_notes",
-            "update_notes",
-            "remove_notes",
-            "transpose_notes",
-            "move_clip",
-            "resize_clip",
-            "duplicate_clip",
-            "delete_clip",
-            "delete_track",
-            "set_pattern_steps",
-            "assign_pattern",
-            "set_automation_points",
-            "create_mixer_channel",
-            "set_mixer_send",
-            "assign_mixer_channel"
-          ]
+            "song",
+            "pattern_store"
+          ],
+          "description": "Track container (default: song)"
         },
-        "bpm": { "type": "integer", "minimum": 10, "maximum": 999 },
-        "trackId": { "type": "string" },
-        "newName": { "type": "string" },
-        "muted": { "type": "boolean" },
-        "parameterId": { "type": "string" },
-        "value": { "type": "number" },
-        "clientRef": { "type": "string" },
-        "positionTicks": { "type": "integer", "minimum": 0 },
-        "lengthTicks": { "type": "integer", "minimum": 1 },
-        "clip": {
-          "type": "object",
-          "properties": {
-            "clipId": { "type": "string" },
-            "clientRef": { "type": "string" }
-          }
+        "cursor": {
+          "type": "string",
+          "description": "Pagination cursor"
         },
-        "notes": {
-          "type": "array",
-          "items": { "$ref": "#/definitions/NoteChange" }
-        },
-        "noteRefs": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "semitones": { "type": "integer", "minimum": -127, "maximum": 127 }
-      }
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      },
+      "additionalProperties": false
     },
-    "PreviewChangesInput": {
+    "lmms_list_clips": {
       "type": "object",
-      "required": ["projectId", "expectedRevision", "changes"],
+      "required": [
+        "trackId"
+      ],
       "properties": {
-        "projectId": { "type": "string" },
-        "expectedRevision": { "type": "integer", "minimum": 0 },
+        "trackId": {
+          "type": "string",
+          "description": "Opaque track handle"
+        },
+        "startTick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endTick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_get_notes": {
+      "type": "object",
+      "required": [
+        "clipId"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string",
+          "description": "Opaque clip handle"
+        },
+        "startTick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endTick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_list_parameters": {
+      "type": "object",
+      "required": [
+        "ownerId"
+      ],
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Owner ID (e.g. 'song' or track handle)"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_list_instruments": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_get_mixer": {
+      "type": "object",
+      "properties": {
+        "channelIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional specific channel index"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_preview_changes": {
+      "type": "object",
+      "required": [
+        "projectId",
+        "expectedRevision",
+        "changes"
+      ],
+      "properties": {
+        "projectId": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
         "changes": {
           "type": "array",
-          "maxItems": 64,
-          "items": { "$ref": "#/definitions/ChangeItem" }
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "bpm"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "set_tempo"
+                  },
+                  "bpm": {
+                    "type": "integer",
+                    "minimum": 10,
+                    "maximum": 999
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "trackId",
+                  "newName"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "rename_track"
+                  },
+                  "trackId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "newName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "trackId",
+                  "muted"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "set_track_mute"
+                  },
+                  "trackId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "muted": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "parameterId",
+                  "value"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "set_parameter"
+                  },
+                  "parameterId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "value": {
+                    "type": "number"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "trackId",
+                  "clientRef",
+                  "positionTicks",
+                  "lengthTicks"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "create_midi_clip"
+                  },
+                  "trackId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "clientRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "positionTicks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "lengthTicks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clip",
+                  "notes"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "add_notes"
+                  },
+                  "clip": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "clipId"
+                        ],
+                        "properties": {
+                          "clipId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "clientRef"
+                        ],
+                        "properties": {
+                          "clientRef": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "positionTicks",
+                        "lengthTicks",
+                        "midiKey"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "noteRef": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "positionTicks": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2147483647
+                        },
+                        "lengthTicks": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 2147483647
+                        },
+                        "midiKey": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 127
+                        },
+                        "volumePercent": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 200
+                        },
+                        "pan": {
+                          "type": "integer",
+                          "minimum": -100,
+                          "maximum": 100
+                        },
+                        "noteType": {
+                          "enum": [
+                            "regular",
+                            "step"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId",
+                  "notes"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "update_notes"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "notes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "positionTicks",
+                        "lengthTicks",
+                        "midiKey",
+                        "noteRef"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "noteRef": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "positionTicks": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2147483647
+                        },
+                        "lengthTicks": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 2147483647
+                        },
+                        "midiKey": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 127
+                        },
+                        "volumePercent": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 200
+                        },
+                        "pan": {
+                          "type": "integer",
+                          "minimum": -100,
+                          "maximum": 100
+                        },
+                        "noteType": {
+                          "enum": [
+                            "regular",
+                            "step"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId",
+                  "noteRefs"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "remove_notes"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "noteRefs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 512,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId",
+                  "semitones"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "transpose_notes"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "noteRefs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 512,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "semitones": {
+                    "type": "integer",
+                    "minimum": -127,
+                    "maximum": 127,
+                    "not": {
+                      "const": 0
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId",
+                  "positionTicks"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "move_clip"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "positionTicks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId",
+                  "lengthTicks"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "resize_clip"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "lengthTicks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId",
+                  "clientRef",
+                  "positionTicks"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "duplicate_clip"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "clientRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "positionTicks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "delete_clip"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "trackId"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "delete_track"
+                  },
+                  "trackId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "create_mixer_channel"
+                  },
+                  "clientRef": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "fromChannelId",
+                  "toChannelId",
+                  "amount"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "set_mixer_send"
+                  },
+                  "fromChannelId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "toChannelId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "amount": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "trackId",
+                  "channelId"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "assign_mixer_channel"
+                  },
+                  "trackId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "channelId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "patternId",
+                  "positionTicks",
+                  "lengthTicks"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "assign_pattern"
+                  },
+                  "patternId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "clientRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "positionTicks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "lengthTicks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "clipId",
+                  "steps"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "set_pattern_steps"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "steps": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "stepIndex",
+                        "enabled"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "stepIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 255
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "parameterId",
+                  "points"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "set_automation_points"
+                  },
+                  "clipId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "clientRef": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "positionTicks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "lengthTicks": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  },
+                  "parameterId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "interpolation": {
+                    "enum": [
+                      "linear",
+                      "discrete"
+                    ]
+                  },
+                  "points": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "positionTicks",
+                        "value"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "positionTicks": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2147483647
+                        },
+                        "value": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                },
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "clipId"
+                    ],
+                    "properties": {
+                      "clientRef": {
+                        "not": {}
+                      },
+                      "positionTicks": {
+                        "not": {}
+                      },
+                      "lengthTicks": {
+                        "not": {}
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "clientRef",
+                      "positionTicks",
+                      "lengthTicks"
+                    ],
+                    "properties": {
+                      "clipId": {
+                        "not": {}
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "description": "List of change commands (set_tempo, create_midi_clip, add_notes, transpose_notes, etc.)",
+          "minItems": 1,
+          "maxItems": 64
         }
-      }
+      },
+      "additionalProperties": false
     },
-    "ApplyChangesInput": {
+    "lmms_apply_changes": {
       "type": "object",
-      "required": ["projectId", "expectedRevision", "planId", "operationKey"],
+      "required": [
+        "projectId",
+        "expectedRevision",
+        "planId",
+        "operationKey"
+      ],
       "properties": {
-        "projectId": { "type": "string" },
-        "expectedRevision": { "type": "integer", "minimum": 0 },
-        "planId": { "type": "string" },
-        "operationKey": { "type": "string" }
-      }
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "planId": {
+          "type": "string"
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
     },
-    "SetTransportInput": {
+    "lmms_set_transport": {
       "type": "object",
-      "required": ["action"],
+      "required": [
+        "action",
+        "operationKey",
+        "projectId",
+        "expectedRevision"
+      ],
       "properties": {
-        "action": { "type": "string", "enum": ["play", "pause", "stop", "seek"] },
-        "tickPosition": { "type": "integer", "minimum": 0 }
-      }
+        "action": {
+          "type": "string",
+          "enum": [
+            "play",
+            "pause",
+            "stop",
+            "seek"
+          ]
+        },
+        "tickPosition": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
     },
-    "UndoRedoInput": {
+    "lmms_undo": {
       "type": "object",
-      "required": ["expectedRevision"],
+      "required": [
+        "expectedRevision",
+        "operationKey",
+        "projectId",
+        "undoGroupId"
+      ],
       "properties": {
-        "expectedRevision": { "type": "integer", "minimum": 0 },
-        "undoGroupId": { "type": "string" }
-      }
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "undoGroupId": {
+          "type": "string"
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
     },
-    "CreateInstrumentTrackInput": {
+    "lmms_redo": {
       "type": "object",
-      "required": ["pluginKey"],
+      "required": [
+        "expectedRevision",
+        "operationKey",
+        "projectId",
+        "undoGroupId"
+      ],
       "properties": {
-        "pluginKey": { "type": "string" },
-        "trackName": { "type": "string" }
-      }
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "undoGroupId": {
+          "type": "string"
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
     },
-    "LoadAssetInput": {
+    "lmms_get_operation": {
       "type": "object",
-      "required": ["assetId"],
+      "required": [
+        "operationKey"
+      ],
       "properties": {
-        "assetId": { "type": "string" },
-        "targetTrackId": { "type": "string" }
-      }
+        "operationKey": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     },
-    "SaveProjectCopyInput": {
+    "lmms_create_instrument_track": {
       "type": "object",
-      "required": ["fileName"],
+      "required": [
+        "pluginKey",
+        "operationKey",
+        "projectId",
+        "expectedRevision"
+      ],
       "properties": {
-        "fileName": { "type": "string" }
-      }
+        "pluginKey": {
+          "type": "string",
+          "description": "Internal plugin key (e.g. 'tripleoscillator')"
+        },
+        "trackName": {
+          "type": "string",
+          "description": "Optional track display name"
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
     },
-    "StartRenderInput": {
+    "lmms_load_asset": {
       "type": "object",
-      "required": ["outputFileName"],
+      "required": [
+        "assetId",
+        "targetTrackId",
+        "operationKey",
+        "projectId",
+        "expectedRevision"
+      ],
       "properties": {
-        "outputFileName": { "type": "string" },
-        "format": { "type": "string", "enum": ["wav", "ogg", "mp3"], "default": "wav" },
-        "sampleRate": { "type": "integer", "enum": [44100, 48000, 88200, 96000], "default": 44100 },
-        "bitDepth": { "type": "integer", "enum": [16, 24, 32], "default": 16 }
-      }
+        "assetId": {
+          "type": "string",
+          "description": "Opaque assetId returned by lmms_list_assets"
+        },
+        "targetTrackId": {
+          "type": "string",
+          "description": "Target track handle"
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
     },
-    "CancelJobInput": {
+    "lmms_save_project_copy": {
       "type": "object",
-      "required": ["jobId"],
+      "required": [
+        "fileName",
+        "operationKey",
+        "projectId",
+        "expectedRevision"
+      ],
       "properties": {
-        "jobId": { "type": "string" }
-      }
+        "fileName": {
+          "type": "string",
+          "description": "Target filename in exports folder (e.g. 'backup.mmp')"
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_start_render": {
+      "type": "object",
+      "required": [
+        "outputFileName",
+        "operationKey",
+        "projectId",
+        "expectedRevision"
+      ],
+      "properties": {
+        "outputFileName": {
+          "type": "string",
+          "description": "Filename in export directory (e.g. 'song.wav')"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "wav"
+          ],
+          "default": "wav"
+        },
+        "sampleRate": {
+          "type": "integer",
+          "minimum": 8000,
+          "maximum": 192000,
+          "default": 44100
+        },
+        "bitDepth": {
+          "type": "integer",
+          "enum": [
+            16,
+            24,
+            32
+          ],
+          "default": 16
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_get_job": {
+      "type": "object",
+      "required": [
+        "jobId"
+      ],
+      "properties": {
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_cancel_job": {
+      "type": "object",
+      "required": [
+        "jobId",
+        "operationKey"
+      ],
+      "properties": {
+        "jobId": {
+          "type": "string"
+        },
+        "operationKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_list_assets": {
+      "type": "object",
+      "required": [
+        "rootId"
+      ],
+      "properties": {
+        "rootId": {
+          "enum": [
+            "samples",
+            "presets"
+          ]
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "additionalProperties": false
+    },
+    "lmms_get_automation": {
+      "type": "object",
+      "required": [
+        "clipId"
+      ],
+      "properties": {
+        "clipId": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "additionalProperties": false
     }
   }
 }
