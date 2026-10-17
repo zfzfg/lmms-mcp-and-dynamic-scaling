@@ -2,6 +2,10 @@
 
 These checks need a running, installed LMMS. They were not executed in the phase 2 pass on 17 October 2026. The minimal file and loader tests in `findings.md` do not replace them.
 
+## Follow-up boundary
+
+The current standalone DPI and waveform paint tests pass in Release/Debug; they do not execute the manual product scenarios below. Full engine integration is registered but blocked by the MSVC version requirement. Keep the 1,000 transport-cycle, 8-hour, installer and listening gates open.
+
 ## Display
 
 - [ ] 100%, 125%, 150%, 156.25%, 175%, and 200% on the main window, mixer, piano roll, and browser

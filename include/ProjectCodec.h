@@ -56,7 +56,8 @@ struct ProjectCodecResult
 	QString message;
 	int line = -1;
 	int column = -1;
-	//! Peak output bytes retained while inflating. Zero when inflate did not run.
+	//! Peak initialized output size while inflating, not allocator capacity or RSS.
+	//! Zero when inflate did not run.
 	qint64 peakDecodedBytes = 0;
 };
 

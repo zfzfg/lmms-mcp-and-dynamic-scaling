@@ -32,6 +32,7 @@
 #include "AudioEngineWorkerThread.h"
 #include "ConfigManager.h"
 #include "DataFile.h"
+#include "SaveTransaction.h"
 #include "NoteTimeIndex.h"
 #include "SampleBuffer.h"
 #include "SampleFrame.h"
@@ -234,7 +235,10 @@ private slots:
 		QVERIFY(backup.open(QIODevice::WriteOnly));
 		backup.write("previous-backup");
 		backup.close();
-		QVERIFY(QDir().mkdir(path + ".bak.incoming"));
+		SaveIoHooks hooks;
+        hooks.failAt = SaveIoHooks::Step::CopyProjectToCandidate;
+        SaveTransaction::setHooks(&hooks);
+        struct ResetHooks { ~ResetHooks() { SaveTransaction::setHooks(nullptr); } } resetHooks;
 
 		DataFile file(DataFile::Type::SongProject);
 		QVERIFY(!file.writeFile(path, false, false));
@@ -256,11 +260,10 @@ private slots:
 		QVERIFY(!buffer.copyLatest(destination, 4, frames));
 		QCOMPARE(destination[0].left(), 0.5f);
 
-		std::atomic<bool> stop{false};
-		std::thread writer([&] {
+		std::jthread writer([&](std::stop_token stop) {
 			int generation = 1;
 			SampleFrame source[32];
-			while (!stop.load())
+			while (!stop.stop_requested())
 			{
 				const auto marker = static_cast<float>(generation);
 				for (auto& frame : source) { frame = SampleFrame(marker, marker); }
@@ -281,7 +284,7 @@ private slots:
 				QCOMPARE(copied[index].right(), marker);
 			}
 		}
-		stop.store(true);
+		writer.request_stop();
 		writer.join();
 	}
 

@@ -280,7 +280,7 @@ public:
 	bool lastPeriodFailed() const { return m_lastPeriodFailed; }
 
 	//! Deletes play handles whose affinity matches the caller. Wrong-affinity handles stay owned.
-	void drainDeferredPlayHandles(bool force = false);
+	void drainDeferredPlayHandles();
 
 	/**
 	 * @brief Renders an audio buffer into @a dst.
@@ -367,6 +367,7 @@ private:
 
 	void startProcessing() { m_audioDev->startProcessing(); }
 	void stopProcessing() { m_audioDev->stopProcessing(); }
+	void shutdownWorkersAndDrain();
 
 
 	AudioDevice * tryAudioDevices();
@@ -413,11 +414,9 @@ private:
 	// place where new playhandles are added temporarily
 	LocklessList<PlayHandle *> m_newPlayHandles;
 	ConstPlayHandleList m_playHandlesToRemove;
-	std::vector<PlayHandle*> m_deferredDeletes;
 	PlayHandleReleaseQueue m_releaseQueue;
-	static constexpr int kReleaseHoldCapacity = 1024;
-	PlayHandle* m_releaseHold[kReleaseHoldCapacity] = {};
-	int m_releaseHoldCount = 0;
+	bool m_drainingRelease = false;
+	bool m_releaseBackpressure = false;
 	AudioDisplayBuffer m_displayBuffer;
 
 	bool retainForRelease(PlayHandle* handle);

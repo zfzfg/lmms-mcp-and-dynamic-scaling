@@ -47,3 +47,7 @@ An earlier harness named CoreContractTest linked some of those pieces and report
 ## What was not measured
 
 CPU model, RAM, audio interface, XRuns, paint times, and the F0–F7 listening fixtures were not measured on a running LMMS process. The numbers in section 5 of the plan stay targets.
+
+## Follow-up baseline, 17 October 2026
+
+The follow-up on `64bc33825` builds and runs `tests/minimal` (8 targets) and `tests/dpi` (25 cases) in Release and Debug with MSVC 19.44.35229.0 / Qt 5.15.2. Both full MCP ON/OFF configurations stop earlier than dependency discovery: `DetectMachine.cmake` requires MSVC >= 19.51. No supported compiler or dependency was substituted. The historical header-stub harness was used only for supplemental source compilation, never as an application or integration-test result. Detailed commands and boundaries are in `findings.md`.

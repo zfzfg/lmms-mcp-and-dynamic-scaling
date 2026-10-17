@@ -103,6 +103,7 @@ public:
 
 	SampleThumbnail() = default;
 	SampleThumbnail(const Sample& sample);
+	SampleThumbnail(std::shared_ptr<const SampleBuffer> buffer, const QString& sampleFile = {});
 	void visualize(VisualizeParameters parameters, QPainter& painter) const;
 
 private:

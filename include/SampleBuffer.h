@@ -29,8 +29,7 @@
 #include <memory>
 #include <vector>
 
-#include "AudioEngine.h"
-#include "Engine.h"
+#include "SampleFrame.h"
 #include "LmmsTypes.h"
 #include "lmms_export.h"
 
@@ -48,10 +47,11 @@ public:
 	using reverse_iterator = std::vector<SampleFrame>::reverse_iterator;
 	using const_reverse_iterator = std::vector<SampleFrame>::const_reverse_iterator;
 
-	SampleBuffer() = default;
+	SampleBuffer();
+	static int defaultSampleRate();
 	SampleBuffer(std::vector<SampleFrame> data, int sampleRate, const QString& audioFile = "");
 	SampleBuffer(
-		const SampleFrame* data, size_t numFrames, int sampleRate = Engine::audioEngine()->outputSampleRate());
+		const SampleFrame* data, size_t numFrames, int sampleRate = defaultSampleRate());
 
 	friend void swap(SampleBuffer& first, SampleBuffer& second) noexcept;
 	auto toBase64() const -> QString;
@@ -87,12 +87,12 @@ public:
 
 	static std::shared_ptr<const SampleBuffer> fromFile(const QString& path);
 	static std::shared_ptr<const SampleBuffer> fromBase64(
-		const QString& str, int sampleRate = Engine::audioEngine()->outputSampleRate());
+		const QString& str, int sampleRate = defaultSampleRate());
 
 private:
 	std::vector<SampleFrame> m_data;
 	QString m_audioFile;
-	sample_rate_t m_sampleRate = Engine::audioEngine()->outputSampleRate();
+	sample_rate_t m_sampleRate = 0;
 	quint64 m_contentRevision = 0;
 };
 

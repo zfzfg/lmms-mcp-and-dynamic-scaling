@@ -1,6 +1,8 @@
 #include <QXmlStreamReader>
 #include <QtEndian>
 #include <QtTest>
+#include <QDirIterator>
+#include <QFile>
 
 #include "ProjectCodec.h"
 
@@ -10,6 +12,35 @@ class ProjectCodecTest : public QObject
 {
 	Q_OBJECT
 private slots:
+	void repositoryDocumentsAndLegacyDoctypes()
+	{
+		const QString root = QFINDTESTDATA("../../../data");
+		QVERIFY(!root.isEmpty());
+		int inspected = 0;
+		QDirIterator files(root, {"*.mmp", "*.mpt", "*.xpf"}, QDir::Files, QDirIterator::Subdirectories);
+		while (files.hasNext())
+		{
+			QFile file(files.next());
+			QVERIFY(file.open(QIODevice::ReadOnly));
+			const auto result = ProjectCodec::inspectXml(file.readAll());
+			QVERIFY2(result.status == ProjectCodecStatus::Ok, qPrintable(file.fileName() + ": " + result.message));
+			++inspected;
+		}
+		QVERIFY(inspected > 100);
+	}
+
+	void declarationsAreParsedRatherThanSearched()
+	{
+		const QByteArray xml = "<!DOCTYPE lmms-project><lmms-project>"
+			"<!-- <!ENTITY harmless> --><![CDATA[<!DOCTYPE HTML PUBLIC 'notes'>]]></lmms-project>";
+		QCOMPARE(ProjectCodec::inspectXml(xml).status, ProjectCodecStatus::Ok);
+		const auto decoded = ProjectCodec::decodeQtCompressed(qCompress(xml));
+		QCOMPARE(decoded.status, ProjectCodecStatus::Ok);
+		QCOMPARE(ProjectCodec::inspectXml(decoded.bytes).status, ProjectCodecStatus::Ok);
+		QVERIFY(ProjectCodec::inspectXml("<!DOCTYPE lmms-project SYSTEM 'file:///missing'><lmms-project/>").status != ProjectCodecStatus::Ok);
+		QVERIFY(ProjectCodec::inspectXml("<!DOCTYPE lmms-project [<!ENTITY x 'text'>]><lmms-project>&x;</lmms-project>").status != ProjectCodecStatus::Ok);
+	}
+
 	void init()
 	{
 		ProjectCodec::setLimits(ProjectCodecLimits{});
@@ -33,6 +64,27 @@ private slots:
 		QCOMPARE(ProjectCodec::classify(xml), ProjectBytesKind::Xml);
 		QCOMPARE(ProjectCodec::inspectXml(xml).status, ProjectCodecStatus::Ok);
 	}
+
+    void utf16BomIsXml_data()
+    {
+        QTest::addColumn<bool>("little");
+        QTest::newRow("little-endian") << true;
+        QTest::newRow("big-endian") << false;
+    }
+    void utf16BomIsXml()
+    {
+        QFETCH(bool, little);
+        const QString text = QStringLiteral("<!DOCTYPE lmms-project><lmms-project/>");
+        QByteArray xml;
+        for (const QChar unit : QString(QChar(0xfeff)) + text)
+        {
+            const auto value = unit.unicode();
+            xml.append(static_cast<char>(little ? value & 0xff : value >> 8));
+            xml.append(static_cast<char>(little ? value >> 8 : value & 0xff));
+        }
+        QCOMPARE(ProjectCodec::classify(xml), ProjectBytesKind::Xml);
+        QCOMPARE(ProjectCodec::inspectXml(xml).status, ProjectCodecStatus::Ok);
+    }
 
 	void shortAndBadHeadersAreNotXmlSizes()
 	{
@@ -104,6 +156,18 @@ private slots:
 		}
 		QCOMPARE(decoded.status, ProjectCodecStatus::Ok);
 		QCOMPARE(decoded.bytes, xml);
+	}
+
+	void chunkBoundariesAndLargeXmlRoundTrip()
+	{
+		for (int size : {65535, 65536, 65537, 2 * 1024 * 1024})
+		{
+			const QByteArray xml = "<lmms-project>" + QByteArray(size, 'x') + "</lmms-project>";
+			const auto decoded = ProjectCodec::decodeQtCompressed(qCompress(xml));
+			QCOMPARE(decoded.status, ProjectCodecStatus::Ok);
+			QCOMPARE(decoded.bytes, xml);
+			QCOMPARE(ProjectCodec::inspectXml(decoded.bytes).status, ProjectCodecStatus::Ok);
+		}
 	}
 };
 

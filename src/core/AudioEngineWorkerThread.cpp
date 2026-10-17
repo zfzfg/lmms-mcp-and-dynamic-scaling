@@ -25,12 +25,11 @@
 #include "AudioEngineWorkerThread.h"
 
 #include <cstdlib>
+#include <algorithm>
 
 #include <QDebug>
 #include <QList>
 
-#include "AudioEngine.h"
-#include "Engine.h"
 #include "Hardware.h"
 #include "ThreadableJob.h"
 
@@ -55,6 +54,7 @@ std::atomic<std::uint64_t> AudioEngineWorkerThread::s_incompleteJobs{ 0 };
 RenderWaitAccount AudioEngineWorkerThread::s_lastWaitAccount{};
 std::chrono::steady_clock::time_point AudioEngineWorkerThread::s_deadline{};
 std::atomic<int> AudioEngineWorkerThread::s_engineOwners{ 0 };
+std::atomic<int> AudioEngineWorkerThread::s_renderBudgetMs{20};
 QList<AudioEngineWorkerThread *> AudioEngineWorkerThread::workerThreads;
 
 AudioEngineWorkerThread::JobQueue::JobQueue() :
@@ -80,6 +80,7 @@ AudioEngineWorkerThread::JobQueue::JobQueue() :
 
 void AudioEngineWorkerThread::JobQueue::reset( OperationMode opMode )
 {
+	m_failed.store(false, std::memory_order_release);
 	// Invalidate in-flight scans before recycling slots. A successful
 	// startAndWaitForJobs() has already waited for those scans to leave
 	// run(); this only matters after a timed-out wait, which must not be
@@ -208,7 +209,30 @@ bool AudioEngineWorkerThread::JobQueue::addJob( ThreadableJob * job )
 
 
 
-void AudioEngineWorkerThread::JobQueue::run()
+bool AudioEngineWorkerThread::JobQueue::processJob(ThreadableJob* job) noexcept
+{
+	try { job->process(); return true; }
+	catch (...)
+	{
+		m_failed.store(true, std::memory_order_release);
+		return false;
+	}
+}
+
+void AudioEngineWorkerThread::JobQueue::cancelPending()
+{
+	for (std::size_t i = 0; i < publishedLimit(); ++i)
+	{
+		if (auto* job = m_items[i].exchange(nullptr, std::memory_order_acq_rel))
+		{
+			job->done();
+			m_failed.store(true, std::memory_order_release);
+			finishOne();
+		}
+	}
+}
+
+void AudioEngineWorkerThread::JobQueue::run(std::chrono::steady_clock::time_point deadline)
 {
 	const auto epoch = m_epoch.load( std::memory_order_acquire );
 	const bool dynamic = m_opMode.load( std::memory_order_acquire ) == OperationMode::Dynamic;
@@ -223,6 +247,7 @@ void AudioEngineWorkerThread::JobQueue::run()
 		const auto limit = publishedLimit();
 		for( std::size_t i = 0; i < limit; ++i )
 		{
+			if (deadline.time_since_epoch().count() != 0 && std::chrono::steady_clock::now() >= deadline) { return; }
 			if( m_epoch.load( std::memory_order_acquire ) != epoch )
 			{
 				return;
@@ -239,11 +264,11 @@ void AudioEngineWorkerThread::JobQueue::run()
 			{
 				// Slot was recycled. Run the job we already claimed so it
 				// is not left Queued, but do not account it on the new batch.
-				job->process();
+				processJob(job);
 				return;
 			}
 
-			job->process();
+			processJob(job);
 			if( m_epoch.load( std::memory_order_acquire ) != epoch )
 			{
 				return;
@@ -290,8 +315,8 @@ bool AudioEngineWorkerThread::JobQueue::waitFor( std::chrono::milliseconds timeo
 
 // implementation of worker threads
 
-AudioEngineWorkerThread::AudioEngineWorkerThread( AudioEngine * audioEngine ) :
-	QThread( audioEngine ),
+AudioEngineWorkerThread::AudioEngineWorkerThread(QObject* parent) :
+	QThread(parent),
 	m_stop( false )
 {
 	// The last worker AudioEngine constructs is never started. Its share of
@@ -395,16 +420,13 @@ void AudioEngineWorkerThread::noteSkippedInlineJob()
 
 std::chrono::milliseconds AudioEngineWorkerThread::renderWaitBudget()
 {
-	auto* engine = Engine::audioEngine();
-	if( engine == nullptr || engine->outputSampleRate() <= 0 || engine->framesPerPeriod() <= 0 )
-	{
-		return std::chrono::milliseconds( 20 );
-	}
-	const auto periodMs = ( static_cast<long long>( engine->framesPerPeriod() ) * 1000 ) / engine->outputSampleRate();
-	const auto budget = periodMs * 2;
-	if( budget < 2 ) { return std::chrono::milliseconds( 2 ); }
-	if( budget > 50 ) { return std::chrono::milliseconds( 50 ); }
-	return std::chrono::milliseconds( static_cast<int>( budget ) );
+    return std::chrono::milliseconds(s_renderBudgetMs.load(std::memory_order_relaxed));
+}
+
+void AudioEngineWorkerThread::setRenderTiming(std::uint64_t frames, std::uint32_t sampleRate)
+{
+    const auto budget = sampleRate == 0 ? 20 : static_cast<int>(std::min<std::uint64_t>(50, (frames * 1000 / sampleRate) * 2));
+    s_renderBudgetMs.store(std::max(2, budget), std::memory_order_relaxed);
 }
 
 bool AudioEngineWorkerThread::resetProcessStateForTests()
@@ -433,6 +455,7 @@ std::uint64_t AudioEngineWorkerThread::incompleteJobs()
 
 RenderWaitAccount AudioEngineWorkerThread::lastWaitAccount()
 {
+	const std::lock_guard<std::mutex> lock(s_mutex);
 	return s_lastWaitAccount;
 }
 
@@ -486,11 +509,12 @@ bool AudioEngineWorkerThread::startAndWaitForJobs( std::chrono::milliseconds bud
 		{
 			// This call is synchronous. The deadline is checked before it starts
 			// and after it returns; it does not interrupt the job.
-			globalJobQueue.run();
+			globalJobQueue.run(absolute);
 			account.ranInline = true;
 		}
 	}
 	const auto inlineEnd = std::chrono::steady_clock::now();
+	if (runInline && inlineEnd >= absolute && s_expected == 0) { globalJobQueue.cancelPending(); }
 	account.inlineNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>( inlineEnd - inlineStart ).count();
 
 	const auto remaining = absolute - std::chrono::steady_clock::now();
@@ -511,7 +535,13 @@ bool AudioEngineWorkerThread::startAndWaitForJobs( std::chrono::milliseconds bud
 			std::chrono::steady_clock::now() - waitStart ).count();
 		if( !settled ) { account.waitBudgetExhausted = true; }
 	}
-	s_lastWaitAccount = account;
+	const bool late = std::chrono::steady_clock::now() >= absolute;
+	if (late && !account.deadlineAlreadyExpired) { s_deadlineMisses.fetch_add(1, std::memory_order_relaxed); }
+	account.deadlineAlreadyExpired = account.deadlineAlreadyExpired || late;
+	{
+		const std::lock_guard<std::mutex> lock(s_mutex);
+		s_lastWaitAccount = account;
+	}
 
 	if( !settled )
 	{
@@ -522,8 +552,8 @@ bool AudioEngineWorkerThread::startAndWaitForJobs( std::chrono::milliseconds bud
 		s_lastWaitTimedOut.store( true, std::memory_order_release );
 		return false;
 	}
-	s_lastWaitTimedOut.store( false, std::memory_order_release );
-	return true;
+	s_lastWaitTimedOut.store(late, std::memory_order_release);
+	return !late && !globalJobQueue.failed();
 }
 
 

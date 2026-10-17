@@ -192,13 +192,8 @@ SET(LMMS_REQUIRED_LIBS ${LMMS_REQUIRED_LIBS}
 	${EXTRA_LIBRARIES}
 )
 
-find_package(ZLIB QUIET)
-if(ZLIB_FOUND)
-	target_compile_definitions(lmmsobjs PUBLIC LMMS_HAVE_ZLIB)
-	list(APPEND LMMS_REQUIRED_LIBS ZLIB::ZLIB)
-else()
-	message(STATUS "zlib was not found. Compressed projects are rejected instead of unpacked without a budget.")
-endif()
+include("${CMAKE_SOURCE_DIR}/cmake/LmmsProjectCodec.cmake")
+list(APPEND LMMS_REQUIRED_LIBS lmms_project_codec_runtime)
 
 target_link_libraries(lmmsobjs
 	${LMMS_REQUIRED_LIBS}

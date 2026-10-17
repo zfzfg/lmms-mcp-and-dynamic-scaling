@@ -724,7 +724,7 @@ bool Mixer::masterMix( SampleFrame* _buf )
 					break;
 				}
 				ch->queue();
-				ch->process();
+				AudioEngineWorkerThread::processInlineJob(ch);
 			}
 		}
 	}

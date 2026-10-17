@@ -100,7 +100,10 @@ public:
 
 		bool readyToReset() const noexcept { return drained(); }
 
-		void run();
+		void run(std::chrono::steady_clock::time_point deadline = {});
+		void cancelPending();
+		bool processJob(ThreadableJob* job) noexcept;
+		bool failed() const { return m_failed.load(std::memory_order_acquire); }
 		void wait();
 		bool waitFor( std::chrono::milliseconds timeout );
 
@@ -129,10 +132,11 @@ public:
 		// wait stops claiming slots and stops touching the new counters.
 		std::atomic<std::uint64_t> m_epoch;
 		std::atomic<OperationMode> m_opMode;
+		std::atomic<bool> m_failed{false};
 	} ;
 
 
-	AudioEngineWorkerThread( AudioEngine * audioEngine );
+	AudioEngineWorkerThread(QObject* parent);
 	~AudioEngineWorkerThread() override;
 
 	//! One-time queue setup. Safe to call more than once. Does not bump the
@@ -147,6 +151,10 @@ public:
 	//! from the moment it is called, after subtracting inline time.
 	static void armRenderDeadline(std::chrono::steady_clock::time_point deadline);
 	static bool deadlineReached();
+	static bool batchFailed() { return globalJobQueue.failed(); }
+	static bool processInlineJob(ThreadableJob* job) { return globalJobQueue.processJob(job); }
+	//! Cancel only unclaimed slots. Claimed jobs remain owned until their workers join.
+	static void cancelPendingJobs() { globalJobQueue.cancelPending(); }
 
 	virtual void quit();
 
@@ -191,10 +199,12 @@ public:
 				else
 				{
 					job->queue();
-					job->process();
+					if (!processInlineJob(job)) { skippedRequiredJob = true; }
 				}
 			}
 		}
+		// Published jobs must still be drained, including after an overflow failure.
+		if (skippedRequiredJob) { startAndWaitForJobs(); }
 		return !skippedRequiredJob;
 	}
 
@@ -227,6 +237,7 @@ public:
 	//! Two audio periods, clamped to 2..50 ms. This is a wait budget, not a
 	//! guarantee that inline plugin code returns inside it.
 	static std::chrono::milliseconds renderWaitBudget();
+	static void setRenderTiming(std::uint64_t frames, std::uint32_t sampleRate);
 
 	//! Test isolation. Does nothing while a worker is inside run() or a wait is open.
 	static bool resetProcessStateForTests();
@@ -254,6 +265,7 @@ private:
 	static RenderWaitAccount s_lastWaitAccount;
 	static std::chrono::steady_clock::time_point s_deadline;
 	static std::atomic<int> s_engineOwners;
+	static std::atomic<int> s_renderBudgetMs;
 	static QList<AudioEngineWorkerThread *> workerThreads;
 
 	std::atomic<bool> m_stop;

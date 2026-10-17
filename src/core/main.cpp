@@ -878,16 +878,26 @@ int main( int argc, char * * argv )
 			const auto choice = promptRecovery(recoveryCandidates);
 			if (choice.choice == RecoveryChoice::DiscardOne)
 			{
-				ConfigManager::inst()->discardRecoveryFile(choice.path);
+				if (!ConfigManager::inst()->discardRecoveryFile(choice.path))
+				{
+					QMessageBox::warning(nullptr, MainWindow::tr("Project recovery"),
+						MainWindow::tr("The recovery file could not be discarded. It may be in use by another instance and was retained."));
+				}
 			}
 			else if (choice.choice == RecoveryChoice::DiscardAll)
 			{
+				QStringList retained;
 				for (const auto& candidate : recoveryCandidates)
 				{
 					if (candidate.liveness == ProcessLiveness::Dead)
 					{
-						ConfigManager::inst()->discardRecoveryFile(candidate.path);
+						if (!ConfigManager::inst()->discardRecoveryFile(candidate.path)) { retained.append(candidate.path); }
 					}
+				}
+				if (!retained.isEmpty())
+				{
+					QMessageBox::warning(nullptr, MainWindow::tr("Project recovery"),
+						MainWindow::tr("Some recovery files could not be discarded and were retained:\n%1").arg(retained.join('\n')));
 				}
 			}
 			else if (choice.choice == RecoveryChoice::Restore)

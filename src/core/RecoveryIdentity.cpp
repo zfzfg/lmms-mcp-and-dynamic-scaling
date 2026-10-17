@@ -13,6 +13,8 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QUuid>
+#include <QLockFile>
+#include <QDebug>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -67,7 +69,7 @@ ProcessLiveness inspectPlatform(const ProcessIdentity& identity)
 	HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(identity.pid));
 	if (!handle)
 	{
-		return GetLastError() == ERROR_ACCESS_DENIED ? ProcessLiveness::Unknown : ProcessLiveness::Dead;
+		return GetLastError() == ERROR_INVALID_PARAMETER ? ProcessLiveness::Dead : ProcessLiveness::Unknown;
 	}
 	FILETIME created{};
 	FILETIME exited{};
@@ -76,6 +78,7 @@ ProcessLiveness inspectPlatform(const ProcessIdentity& identity)
 	const BOOL times = GetProcessTimes(handle, &created, &exited, &kernel, &user);
 	CloseHandle(handle);
 	if (!times) { return ProcessLiveness::Unknown; }
+	if (exited.dwLowDateTime != 0 || exited.dwHighDateTime != 0) { return ProcessLiveness::Dead; }
 	ULARGE_INTEGER stamp;
 	stamp.LowPart = created.dwLowDateTime;
 	stamp.HighPart = created.dwHighDateTime;
@@ -84,8 +87,7 @@ ProcessLiveness inspectPlatform(const ProcessIdentity& identity)
 #elif defined(__linux__)
 	if (::kill(static_cast<pid_t>(identity.pid), 0) != 0)
 	{
-		if (errno == EPERM) { return ProcessLiveness::Unknown; }
-		return ProcessLiveness::Dead;
+		return errno == ESRCH ? ProcessLiveness::Dead : ProcessLiveness::Unknown;
 	}
 	quint64 observed = 0;
 	if (!readProcStart(identity.pid, &observed))
@@ -97,8 +99,7 @@ ProcessLiveness inspectPlatform(const ProcessIdentity& identity)
 #else
 	if (::kill(static_cast<pid_t>(identity.pid), 0) != 0)
 	{
-		if (errno == EPERM) { return ProcessLiveness::Unknown; }
-		return ProcessLiveness::Dead;
+		return errno == ESRCH ? ProcessLiveness::Dead : ProcessLiveness::Unknown;
 	}
 	// Without a start token there is no way to see pid reuse. A recorded token
 	// that cannot be compared must stay unknown.
@@ -112,7 +113,8 @@ ProcessLiveness inspectPlatform(const ProcessIdentity& identity)
 ProcessIdentity RecoveryIdentity::currentProcess()
 {
 	ProcessIdentity identity;
-	identity.uuid = QUuid::createUuid().toString(QUuid::Id128);
+	static const QString uuid = QUuid::createUuid().toString(QUuid::Id128);
+	identity.uuid = uuid;
 #if defined(_WIN32)
 	identity.pid = static_cast<qint64>(GetCurrentProcessId());
 	FILETIME created{};
@@ -179,15 +181,17 @@ RecoveryLockInfo RecoveryIdentity::readLockFile(const QString& path)
 	if (lines.first().startsWith(QStringLiteral("lmms-lock ")))
 	{
 		info.version = lines.first().section(' ', 1, 1).toInt();
+        if (info.version != 2) { return info; }
+        bool pidOk = false, startOk = false, uuidSeen = false;
 		for (int index = 1; index < lines.size(); ++index)
 		{
 			const QString key = lines.at(index).section(' ', 0, 0);
 			const QString value = lines.at(index).section(' ', 1);
-			if (key == QStringLiteral("pid")) { info.identity.pid = value.toLongLong(); }
-			else if (key == QStringLiteral("start")) { info.identity.startToken = value.toULongLong(); }
-			else if (key == QStringLiteral("uuid")) { info.identity.uuid = value.trimmed(); }
+			if (key == QStringLiteral("pid")) { if (pidOk) { return info; } info.identity.pid = value.toLongLong(&pidOk); }
+			else if (key == QStringLiteral("start")) { if (startOk) { return info; } info.identity.startToken = value.toULongLong(&startOk); }
+			else if (key == QStringLiteral("uuid")) { if (uuidSeen) { return info; } uuidSeen = true; info.identity.uuid = value.trimmed(); }
 		}
-		info.parsed = info.identity.pid > 0;
+		info.parsed = pidOk && startOk && uuidSeen && !info.identity.uuid.isEmpty() && info.identity.pid > 0;
 		return info;
 	}
 	bool ok = false;
@@ -215,62 +219,87 @@ bool RecoveryIdentity::isDeletableRecoveryFile(const QString& path, const QStrin
 	return parent.compare(root, Qt::CaseInsensitive) == 0;
 }
 
+bool RecoveryIdentity::withClaimLock(const QString& recoveryPath, const std::function<bool()>& action)
+{
+    const QFileInfo info(recoveryPath);
+    const QString parent = QFileInfo(info.absolutePath()).canonicalFilePath();
+    if (parent.isEmpty() || info.isSymLink()) { return false; }
+    QLockFile lock(QDir(parent).filePath(info.fileName()) + QStringLiteral(".claim-guard"));
+    lock.setStaleLockTime(0);
+    return lock.tryLock(0) && action();
+}
+
+ProcessLiveness RecoveryIdentity::claimLiveness(const QString& recoveryPath)
+{
+    const QString claimPath = recoveryPath + QStringLiteral(".claim");
+    if (!QFileInfo::exists(claimPath)) { return ProcessLiveness::Dead; }
+    const auto existing = readLockFile(claimPath);
+    return existing.parsed ? inspect(existing.identity) : ProcessLiveness::Unknown;
+}
+
+bool RecoveryIdentity::claimOwnedByCurrentProcess(const QString& recoveryPath)
+{
+    const auto existing = readLockFile(recoveryPath + QStringLiteral(".claim"));
+    const auto self = currentProcess();
+    return existing.parsed && existing.identity.pid == self.pid
+        && existing.identity.startToken == self.startToken && existing.identity.uuid == self.uuid;
+}
+
+bool RecoveryIdentity::discardRecoveryFile(const QString& path, const QString& directory, const QString& ownRecovery)
+{
+    return withClaimLock(path, [&]() {
+        if (!isDeletableRecoveryFile(path, directory)) { return false; }
+        const QString absolute = QFileInfo(path).absoluteFilePath();
+        const bool ours = !ownRecovery.isEmpty() && absolute == QFileInfo(ownRecovery).absoluteFilePath();
+        if (!claimOwnedByCurrentProcess(absolute) && claimLiveness(absolute) != ProcessLiveness::Dead) { return false; }
+        QString sessionLock = absolute;
+        sessionLock.chop(4); sessionLock += ".lock";
+        if (!ours && QFileInfo::exists(sessionLock))
+        {
+            const auto owner = readLockFile(sessionLock);
+            if (!owner.parsed || inspect(owner.identity) != ProcessLiveness::Dead) { return false; }
+        }
+        // Keep both ownership records if the source could not be removed.
+        if (!QFile::remove(absolute)) { return false; }
+        for (const auto& artifact : {sessionLock, absolute + QStringLiteral(".claim")})
+        {
+            if (QFileInfo::exists(artifact) && !QFile::remove(artifact))
+            {
+                qWarning().noquote() << "Could not remove recovery ownership record:" << artifact;
+            }
+        }
+        return true;
+    });
+}
+
 bool RecoveryIdentity::tryClaim(const QString& recoveryPath, const ProcessIdentity& who, QString* error)
 {
-	const QString claimPath = recoveryPath + QStringLiteral(".claim");
-	for (int attempt = 0; attempt < 2; ++attempt)
-	{
-		QFile claim(claimPath);
-		if (claim.open(QIODevice::WriteOnly | QIODevice::NewOnly))
-		{
-			const QByteArray body = QStringLiteral("lmms-lock 2\npid %1\nstart %2\nuuid %3\n")
-				.arg(who.pid)
-				.arg(who.startToken)
-				.arg(who.uuid)
-				.toUtf8();
-			const bool wrote = claim.write(body) == body.size();
-			claim.close();
-			if (!wrote)
-			{
-				QFile::remove(claimPath);
-				if (error) { *error = QStringLiteral("Could not write the recovery claim."); }
-				return false;
-			}
-			return true;
-		}
-		const auto existing = readLockFile(claimPath);
-		if (!existing.parsed)
-		{
-			if (error) { *error = QStringLiteral("The recovery claim at %1 is unreadable.").arg(claimPath); }
-			return false;
-		}
-		const auto liveness = inspect(existing.identity);
-		if (liveness != ProcessLiveness::Dead)
-		{
-			if (error)
-			{
-				*error = liveness == ProcessLiveness::Unknown
-					? QStringLiteral("The recovery claim owner cannot be queried. The file was left untouched.")
-					: QStringLiteral("Another LMMS instance already claimed this recovery file.");
-			}
-			return false;
-		}
-		QFile::remove(claimPath);
-	}
-	if (error) { *error = QStringLiteral("Could not claim the recovery file."); }
-	return false;
+    const bool result = withClaimLock(recoveryPath, [&]() {
+        if (!QFileInfo(recoveryPath).isFile() || QFileInfo(recoveryPath).isSymLink()) { return false; }
+        QString sessionLock = recoveryPath;
+        if (!sessionLock.endsWith(".mmp")) { return false; }
+        sessionLock.chop(4); sessionLock += ".lock";
+        if (QFileInfo::exists(sessionLock))
+        {
+            const auto session = readLockFile(sessionLock);
+            if (!session.parsed || inspect(session.identity) != ProcessLiveness::Dead) { return false; }
+        }
+        if (claimLiveness(recoveryPath) != ProcessLiveness::Dead)
+        {
+            if (error) { *error = QStringLiteral("Another instance claimed this recovery file, or the claim owner is unknown. It was left untouched."); }
+            return false;
+        }
+        return writeLockFile(recoveryPath + QStringLiteral(".claim"), who, error);
+    });
+    if (!result && error && error->isEmpty()) { *error = QStringLiteral("Could not exclusively claim the recovery file."); }
+    return result;
 }
 
 void RecoveryIdentity::releaseClaim(const QString& recoveryPath)
 {
-	const QString claimPath = recoveryPath + QStringLiteral(".claim");
-	const auto existing = readLockFile(claimPath);
-	if (!existing.parsed) { return; }
-	const auto self = currentProcess();
-	if (existing.identity.pid == self.pid && (existing.identity.startToken == 0 || existing.identity.startToken == self.startToken))
-	{
-		QFile::remove(claimPath);
-	}
+    withClaimLock(recoveryPath, [&]() {
+        return claimOwnedByCurrentProcess(recoveryPath) && QFile::remove(recoveryPath + QStringLiteral(".claim"));
+    });
 }
 
 } // namespace lmms

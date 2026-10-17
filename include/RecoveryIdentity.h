@@ -10,6 +10,7 @@
 #define LMMS_RECOVERY_IDENTITY_H
 
 #include <QString>
+#include <functional>
 
 namespace lmms
 {
@@ -57,6 +58,11 @@ public:
 	//! claim is replaced. The claim file is @p recoveryPath + ".claim".
 	static bool tryClaim(const QString& recoveryPath, const ProcessIdentity& who, QString* error);
 	static void releaseClaim(const QString& recoveryPath);
+	//! Serializes claim inspection, replacement and recovery deletion across processes.
+	static bool withClaimLock(const QString& recoveryPath, const std::function<bool()>& action);
+	static ProcessLiveness claimLiveness(const QString& recoveryPath);
+	static bool claimOwnedByCurrentProcess(const QString& recoveryPath);
+	static bool discardRecoveryFile(const QString& path, const QString& directory, const QString& ownRecovery = {});
 };
 
 } // namespace lmms

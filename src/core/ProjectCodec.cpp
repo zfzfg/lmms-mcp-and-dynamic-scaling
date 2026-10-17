@@ -14,13 +14,13 @@
 #include <QXmlStreamReader>
 #include <QtEndian>
 
-#if defined(LMMS_HAVE_ZLIB)
-#include <zlib.h>
-#elif defined(__has_include)
-#if __has_include(<QtZlib/zlib.h>)
+#if defined(LMMS_USE_QT_ZLIB)
 #include <QtZlib/zlib.h>
 #define LMMS_HAVE_ZLIB 1
-#endif
+#elif defined(LMMS_HAVE_ZLIB)
+#include <zlib.h>
+#else
+#error A working zlib must be configured for compressed LMMS projects
 #endif
 
 namespace lmms
@@ -59,12 +59,6 @@ bool hasBom(const QByteArray& data, int* bomBytes)
 	return false;
 }
 
-bool containsDoctype(const QByteArray& data)
-{
-	const QByteArray upper = data.toUpper();
-	return upper.contains("<!DOCTYPE") || upper.contains("<!ENTITY");
-}
-
 } // namespace
 
 void ProjectCodec::setLimits(const ProjectCodecLimits& limits)
@@ -81,6 +75,18 @@ bool ProjectCodec::looksLikeXml(const QByteArray& data)
 {
 	int bom = 0;
 	hasBom(data, &bom);
+    if (bom == 2)
+    {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(data.constData());
+        const bool little = bytes[0] == 0xff;
+        for (int index = 2; index + 1 < data.size(); index += 2)
+        {
+            const unsigned unit = little ? bytes[index] | (bytes[index + 1] << 8) : (bytes[index] << 8) | bytes[index + 1];
+            if (unit == ' ' || unit == '\t' || unit == '\r' || unit == '\n') { continue; }
+            return unit == '<';
+        }
+        return false;
+    }
 	for (int index = bom; index < data.size(); ++index)
 	{
 		const unsigned char ch = static_cast<unsigned char>(data.at(index));
@@ -117,12 +123,6 @@ ProjectCodecResult ProjectCodec::inspectXml(const QByteArray& xml)
 		return makeResult(ProjectCodecStatus::InputTooLarge,
 			QStringLiteral("XML text exceeds the input budget."));
 	}
-	if (containsDoctype(xml))
-	{
-		return makeResult(ProjectCodecStatus::UnsupportedDocument,
-			QStringLiteral("Project XML must not declare a DOCTYPE or entity."));
-	}
-
 	QXmlStreamReader reader(xml);
 	int depth = 0;
 	int elements = 0;
@@ -135,7 +135,19 @@ ProjectCodecResult ProjectCodec::inspectXml(const QByteArray& xml)
 			return makeResult(ProjectCodecStatus::Xml, reader.errorString(),
 				static_cast<int>(reader.lineNumber()), static_cast<int>(reader.columnNumber()));
 		}
-		if (token == QXmlStreamReader::StartElement)
+		if (token == QXmlStreamReader::DTD)
+		{
+			// Legacy LMMS files have a name-only doctype. Never resolve a DTD
+			// or allow an internal subset; CDATA and comments are separate tokens.
+			const auto declaration = reader.text().toString().simplified();
+			if (declaration != QStringLiteral("<!DOCTYPE lmms-project>")
+				&& declaration != QStringLiteral("<!DOCTYPE multimedia-project>"))
+			{
+				return makeResult(ProjectCodecStatus::UnsupportedDocument,
+					QStringLiteral("Only a name-only LMMS document type is supported."));
+			}
+		}
+		else if (token == QXmlStreamReader::StartElement)
 		{
 			++elements;
 			++depth;
@@ -225,6 +237,12 @@ ProjectCodecResult ProjectCodec::decodeQtCompressed(const QByteArray& compressed
 
 	QByteArray decoded;
 	decoded.reserve(static_cast<int>(std::min<qint64>(cap, 1024 * 1024)));
+    qint64 peakDecodedBytes = 0;
+    auto decodeFailure = [&](ProjectCodecStatus status, const QString& message) {
+        auto result = makeResult(status, message);
+        result.peakDecodedBytes = peakDecodedBytes;
+        return result;
+    };
 	constexpr int kChunk = 64 * 1024;
 	int inflateStatus = Z_OK;
 	bool stalled = false;
@@ -233,12 +251,13 @@ ProjectCodecResult ProjectCodec::decodeQtCompressed(const QByteArray& compressed
 		if (static_cast<qint64>(decoded.size()) >= cap)
 		{
 			inflateEnd(&stream);
-			return makeResult(ProjectCodecStatus::Budget,
+			return decodeFailure(ProjectCodecStatus::Budget,
 				QStringLiteral("Uncompressed project data exceeded the declared size or the decode budget during unpack."));
 		}
 		const qint64 room = std::min<qint64>(kChunk, cap - decoded.size());
 		const int oldSize = decoded.size();
 		decoded.resize(oldSize + static_cast<int>(room));
+		peakDecodedBytes = std::max<qint64>(peakDecodedBytes, decoded.size());
 		stream.next_out = reinterpret_cast<Bytef*>(decoded.data() + oldSize);
 		stream.avail_out = static_cast<uInt>(room);
 		const uInt beforeIn = stream.avail_in;
@@ -250,13 +269,13 @@ ProjectCodecResult ProjectCodec::decodeQtCompressed(const QByteArray& compressed
 		if (inflateStatus == Z_DATA_ERROR)
 		{
 			inflateEnd(&stream);
-			return makeResult(ProjectCodecStatus::Checksum,
+			return decodeFailure(ProjectCodecStatus::Checksum,
 				QStringLiteral("Compressed project data failed its checksum or is corrupt."));
 		}
 		if (inflateStatus != Z_OK)
 		{
 			inflateEnd(&stream);
-			return makeResult(ProjectCodecStatus::Truncated,
+			return decodeFailure(ProjectCodecStatus::Truncated,
 				QStringLiteral("Compressed project data ended before the zlib stream finished."));
 		}
 		if (!progressed)
@@ -269,20 +288,20 @@ ProjectCodecResult ProjectCodec::decodeQtCompressed(const QByteArray& compressed
 	inflateEnd(&stream);
 	if (stalled)
 	{
-		return makeResult(ProjectCodecStatus::NoProgress, QStringLiteral("Decompression made no progress and was stopped."));
+		return decodeFailure(ProjectCodecStatus::NoProgress, QStringLiteral("Decompression made no progress and was stopped."));
 	}
 	if (inflateStatus != Z_STREAM_END)
 	{
-		return makeResult(ProjectCodecStatus::Truncated, QStringLiteral("Compressed project data ended before the zlib stream finished."));
+		return decodeFailure(ProjectCodecStatus::Truncated, QStringLiteral("Compressed project data ended before the zlib stream finished."));
 	}
 	if (totalIn != compressed.size() - 4)
 	{
-		return makeResult(ProjectCodecStatus::Trailing,
+		return decodeFailure(ProjectCodecStatus::Trailing,
 			QStringLiteral("Compressed project data has bytes after the zlib stream."));
 	}
 	if (static_cast<quint32>(decoded.size()) != declared)
 	{
-		return makeResult(ProjectCodecStatus::Checksum,
+		return decodeFailure(ProjectCodecStatus::Checksum,
 			QStringLiteral("Uncompressed size %1 does not match the declared size %2.")
 				.arg(decoded.size())
 				.arg(declared));
@@ -290,7 +309,7 @@ ProjectCodecResult ProjectCodec::decodeQtCompressed(const QByteArray& compressed
 	ProjectCodecResult result;
 	result.status = ProjectCodecStatus::Ok;
 	result.bytes = std::move(decoded);
-	result.peakDecodedBytes = result.bytes.size();
+	result.peakDecodedBytes = peakDecodedBytes;
 	return result;
 #endif
 }

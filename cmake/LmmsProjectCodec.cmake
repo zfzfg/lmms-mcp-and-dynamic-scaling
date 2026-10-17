@@ -1,0 +1,23 @@
+# Compressed projects are a required capability, including isolated contract builds.
+if(NOT TARGET lmms_project_codec_runtime)
+    add_library(lmms_project_codec_runtime INTERFACE)
+    find_package(ZLIB QUIET)
+    if(ZLIB_FOUND)
+        target_compile_definitions(lmms_project_codec_runtime INTERFACE LMMS_HAVE_ZLIB)
+        target_link_libraries(lmms_project_codec_runtime INTERFACE ZLIB::ZLIB)
+    elseif(TARGET Qt5::Core)
+        include(CheckCXXSourceCompiles)
+        set(CMAKE_REQUIRED_LIBRARIES Qt5::Core)
+        check_cxx_source_compiles("#include <QtZlib/zlib.h>
+int main() { z_stream stream{}; int result = inflateInit(&stream); inflateEnd(&stream); return result; }"
+            LMMS_QT_ZLIB_LINKS)
+        unset(CMAKE_REQUIRED_LIBRARIES)
+        if(NOT LMMS_QT_ZLIB_LINKS)
+            message(FATAL_ERROR "A working zlib is required for LMMS compressed projects. Install zlib and reconfigure.")
+        endif()
+        target_compile_definitions(lmms_project_codec_runtime INTERFACE LMMS_USE_QT_ZLIB)
+        target_link_libraries(lmms_project_codec_runtime INTERFACE Qt5::Core)
+    else()
+        message(FATAL_ERROR "zlib is required for LMMS compressed projects. Install zlib and reconfigure.")
+    endif()
+endif()

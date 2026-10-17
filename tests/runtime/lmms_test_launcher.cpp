@@ -9,6 +9,7 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -26,14 +27,18 @@ namespace
 
 std::wstring quote(const std::wstring& value)
 {
-	std::wstring out = L"\"";
-	for (wchar_t ch : value)
-	{
-		if (ch == L'"') { out += L'\\'; }
-		out += ch;
-	}
-	out += L'"';
-	return out;
+    std::wstring out = L"\"";
+    size_t slashes = 0;
+    for (wchar_t ch : value)
+    {
+        if (ch == L'\\') { ++slashes; continue; }
+        out.append(ch == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+        slashes = 0;
+        out += ch;
+    }
+    out.append(slashes * 2, L'\\');
+    out += L'"';
+    return out;
 }
 
 bool prependEnv(std::wstring& block, const std::wstring& key, const std::wstring& prefix)
@@ -53,7 +58,9 @@ bool prependEnv(std::wstring& block, const std::wstring& key, const std::wstring
 		}
 		pos = end + 1;
 	}
-	block.insert(0, needle + prefix + L"\0");
+	std::wstring entry = needle + prefix;
+	entry.push_back(L'\0');
+	block.insert(0, entry);
 	return true;
 }
 
@@ -103,32 +110,78 @@ int main()
 		for (wchar_t* cursor = current; *cursor != L'\0'; cursor += wcslen(cursor) + 1)
 		{
 			environment.append(cursor);
-			environment.push_back(L'\0');
+			if (environment.empty()) { environment.push_back(L'\0'); }
+	environment.push_back(L'\0');
 		}
 		FreeEnvironmentStringsW(current);
 	}
+	if (environment.empty()) { environment.push_back(L'\0'); }
 	environment.push_back(L'\0');
 	if (!prefix.empty()) { prependEnv(environment, L"PATH", prefix); }
 	if (!plugins.empty()) { prependEnv(environment, L"QT_PLUGIN_PATH", plugins); }
+	std::vector<std::wstring> entries;
+	for (size_t pos = 0; pos < environment.size() && environment[pos] != L'\0';)
+	{
+		const auto end = environment.find(L'\0', pos);
+		entries.push_back(environment.substr(pos, end - pos));
+		pos = end + 1;
+	}
+	std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+		return _wcsicmp(left.c_str(), right.c_str()) < 0;
+	});
+	environment.clear();
+	for (const auto& entry : entries) { environment += entry; environment.push_back(L'\0'); }
+	if (environment.empty()) { environment.push_back(L'\0'); }
+	environment.push_back(L'\0');
 
 	STARTUPINFOW startup{};
 	startup.cb = sizeof(startup);
+	startup.dwFlags = STARTF_USESTDHANDLES;
+	startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+	startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+	for (HANDLE handle : {startup.hStdInput, startup.hStdOutput, startup.hStdError})
+	{
+		if (handle && handle != INVALID_HANDLE_VALUE) { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT); }
+	}
 	PROCESS_INFORMATION process{};
 	std::vector<wchar_t> mutableCommand(command.begin(), command.end());
 	mutableCommand.push_back(L'\0');
-	if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, TRUE, CREATE_UNICODE_ENVIRONMENT,
+	HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+    {
+        const auto error = GetLastError();
+        if (job) { CloseHandle(job); }
+        return fail(L"Could not create the child cleanup job", error);
+    }
+	if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, TRUE, CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
 			environment.empty() ? nullptr : environment.data(), nullptr, &startup, &process))
 	{
-		return fail(L"CreateProcessW failed", GetLastError());
+		const auto error = GetLastError();
+		CloseHandle(job);
+		return fail(L"CreateProcessW failed", error);
 	}
 
+    if (!AssignProcessToJobObject(job, process.hProcess) || ResumeThread(process.hThread) == static_cast<DWORD>(-1))
+    {
+        const auto error = GetLastError();
+        TerminateProcess(process.hProcess, 125);
+        WaitForSingleObject(process.hProcess, 5000);
+        CloseHandle(process.hThread); CloseHandle(process.hProcess); CloseHandle(job);
+        return fail(L"Could not start a supervised child", error);
+    }
 	const DWORD waited = WaitForSingleObject(process.hProcess, timeoutMs);
-	if (waited == WAIT_TIMEOUT)
+	if (waited != WAIT_OBJECT_0)
 	{
-		TerminateProcess(process.hProcess, 124);
+		const DWORD error = GetLastError();
+		TerminateJobObject(job, 124);
 		WaitForSingleObject(process.hProcess, 5000);
 		CloseHandle(process.hThread);
 		CloseHandle(process.hProcess);
+		CloseHandle(job);
+		if (waited != WAIT_TIMEOUT) { return fail(L"Waiting for the child failed", error); }
 		fwprintf(stderr, L"lmms_test_launcher: child timed out after %lu ms\n", timeoutMs);
 		return 124;
 	}
@@ -136,6 +189,7 @@ int main()
 	GetExitCodeProcess(process.hProcess, &status);
 	CloseHandle(process.hThread);
 	CloseHandle(process.hProcess);
+	CloseHandle(job);
 	return static_cast<int>(status);
 }
 

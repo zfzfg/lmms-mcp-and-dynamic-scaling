@@ -29,6 +29,7 @@
 #include <cstdlib>
 
 #include <QDebug>
+#include <QTimer>
 
 #include "MixHelpers.h"
 
@@ -115,7 +116,13 @@ AudioEngine::AudioEngine(bool renderOnly)
 	m_outputBufferWrite = std::make_unique<SampleFrame[]>(m_framesPerPeriod);
 	m_silenceBuffer = std::make_unique<SampleFrame[]>(m_framesPerPeriod);
 	zeroSampleFrames(m_silenceBuffer.get(), m_framesPerPeriod);
-	m_deferredDeletes.reserve(256);
+	auto* releaseTimer = new QTimer(this);
+	releaseTimer->setInterval(20);
+	connect(releaseTimer, &QTimer::timeout, this, [this]() {
+		const std::unique_lock<std::recursive_mutex> lock(m_changeMutex, std::try_to_lock);
+		if (lock.owns_lock() && !AudioEngineWorkerThread::batchInFlight()) { drainDeferredPlayHandles(); }
+	});
+	releaseTimer->start();
 
 	if (!AudioEngineWorkerThread::tryAcquireEngineOwnership())
 	{
@@ -140,22 +147,7 @@ AudioEngine::AudioEngine(bool renderOnly)
 
 AudioEngine::~AudioEngine()
 {
-	for( int w = 0; w < m_numWorkers; ++w )
-	{
-		m_workers[w]->quit();
-	}
-
-	for( int w = 0; w < m_numWorkers; ++w )
-	{
-		if (!m_workers[w]->wait(3000))
-		{
-			qCritical("Audio worker %d is still inside a job; aborting instead of freeing it", w);
-			std::abort();
-		}
-	}
-	drainDeferredPlayHandles(true);
-	for (auto* handle : m_deferredDeletes) { delete handle; }
-	m_deferredDeletes.clear();
+	shutdownWorkersAndDrain();
 	AudioEngineWorkerThread::releaseEngineOwnership();
 
 	delete m_midiClient;
@@ -234,14 +226,10 @@ void AudioEngine::renderStageNoteSetup()
 		clearInternal();
 	}
 
-	// Destructors from the previous period run here, after workers have joined.
-	for (auto* handle : m_deferredDeletes) { delete handle; }
-	m_deferredDeletes.clear();
 
 	// One pass over the active handles instead of a linear search per removal.
 	if (!m_playHandlesToRemove.isEmpty())
 	{
-		ConstPlayHandleList stillPending;
 		for (auto it = m_playHandles.begin(); it != m_playHandles.end();)
 		{
 			if (std::find(m_playHandlesToRemove.begin(), m_playHandlesToRemove.end(), *it) == m_playHandlesToRemove.end())
@@ -256,7 +244,6 @@ void AudioEngine::renderStageNoteSetup()
 			}
 			else if (!retainForRelease(*it))
 			{
-				stillPending.push_back(*it);
 				++it;
 				continue;
 			}
@@ -264,9 +251,9 @@ void AudioEngine::renderStageNoteSetup()
 			{
 				(*it)->audioBusHandle()->removePlayHandle(*it);
 			}
+			m_playHandlesToRemove.removeAll(*it);
 			it = m_playHandles.erase(it);
 		}
-		m_playHandlesToRemove = std::move(stillPending);
 	}
 
 	swapBuffers();
@@ -334,6 +321,7 @@ bool AudioEngine::renderStageEffects()
 			{
 				(*it)->audioBusHandle()->removePlayHandle(*it);
 			}
+			m_playHandlesToRemove.removeAll(*it);
 			it = m_playHandles.erase(it);
 		}
 		else
@@ -352,12 +340,9 @@ bool AudioEngine::renderStageMix()
 
 	Mixer *mixer = Engine::mixer();
 	if (!mixer->masterMix(m_outputBufferWrite.get())) { return false; }
+	if (AudioEngineWorkerThread::deadlineReached() || AudioEngineWorkerThread::batchFailed()) { return false; }
 
 	MixHelpers::multiply(m_outputBufferWrite.get(), m_masterGain, m_framesPerPeriod);
-
-	// Publish the previous period, which is the buffer readers are allowed to copy.
-	// The raw pointer is not emitted: a queued slot could observe it after reuse.
-	m_displayBuffer.publish(m_outputBufferRead.get(), m_framesPerPeriod);
 
 	// and trigger LFOs
 	EnvelopeAndLfoParameters::instances()->trigger();
@@ -408,6 +393,13 @@ std::span<const SampleFrame> AudioEngine::renderNextPeriod()
 		{
 			return finishBlockedPeriod(false);
 		}
+		if (m_releaseBackpressure)
+		{
+			// Do not keep scheduling new handles while the non-audio owner is
+			// unable to drain the bounded handoff. Existing handles stay owned.
+			if (m_releaseQueue.sizeApprox() != 0) { return finishBlockedPeriod(false); }
+			m_releaseBackpressure = false;
+		}
 		if (m_renderFailed || Engine::mixer()->cleanupPending())
 		{
 			if (!Engine::mixer()->cleanupAfterQuiescence())
@@ -419,10 +411,12 @@ std::span<const SampleFrame> AudioEngine::renderNextPeriod()
 			m_renderFailed = false;
 		}
 
+		AudioEngineWorkerThread::setRenderTiming(m_framesPerPeriod, outputSampleRate());
 		const auto budget = AudioEngineWorkerThread::renderWaitBudget();
 		AudioEngineWorkerThread::armRenderDeadline(std::chrono::steady_clock::now() + budget);
 		renderStageNoteSetup();
-		if (!renderStageInstruments() || !renderStageEffects() || !renderStageMix())
+		if (!renderStageInstruments() || !renderStageEffects() || !renderStageMix()
+			|| AudioEngineWorkerThread::deadlineReached() || AudioEngineWorkerThread::batchFailed())
 		{
 			AudioEngineWorkerThread::armRenderDeadline({});
 			return finishBlockedPeriod(true);
@@ -430,6 +424,7 @@ std::span<const SampleFrame> AudioEngine::renderNextPeriod()
 		AudioEngineWorkerThread::armRenderDeadline({});
 
 		m_lastPeriodFailed = false;
+		m_displayBuffer.publish(m_outputBufferRead.get(), m_framesPerPeriod);
 		m_profiler.finishPeriod(outputSampleRate(), m_framesPerPeriod);
 		m_outputBufferReadIndex = 0;
 		return {m_outputBufferRead.get(), static_cast<size_t>(m_framesPerPeriod)};
@@ -437,6 +432,7 @@ std::span<const SampleFrame> AudioEngine::renderNextPeriod()
 	catch (...)
 	{
 		AudioEngineWorkerThread::armRenderDeadline({});
+		AudioEngineWorkerThread::cancelPendingJobs();
 		qCritical("Audio render threw. This period is silence and the batch stays live until it finishes.");
 		return finishBlockedPeriod(true);
 	}
@@ -444,43 +440,57 @@ std::span<const SampleFrame> AudioEngine::renderNextPeriod()
 
 bool AudioEngine::retainForRelease(PlayHandle* handle)
 {
-	if (handle == nullptr) { return true; }
-	if (m_releaseQueue.tryPush(handle)) { return true; }
-	if (m_releaseHoldCount < kReleaseHoldCapacity)
-	{
-		m_releaseHold[m_releaseHoldCount++] = handle;
-		return true;
-	}
-	return false;
+    // Bound handles remain on the active list until their owner thread drains them.
+    // A full queue also leaves ownership with that list.
+    if (handle == nullptr) { return true; }
+    if (handle->affinityMatters()) { return false; }
+    if (m_releaseQueue.tryPush(handle)) { return true; }
+    m_releaseBackpressure = true;
+    return false;
 }
 
-void AudioEngine::drainDeferredPlayHandles(bool force)
+void AudioEngine::drainDeferredPlayHandles()
 {
-	auto ownsThread = [&](PlayHandle* handle) {
-		return force || !handle->affinityMatters() || handle->affinity() == QThread::currentThread();
-	};
-	PlayHandle* blocked[64];
-	int blockedCount = 0;
-	while (PlayHandle* handle = m_releaseQueue.tryPop())
-	{
-		if (ownsThread(handle)) { delete handle; continue; }
-		if (blockedCount < 64) { blocked[blockedCount++] = handle; }
-		else if (m_releaseHoldCount < kReleaseHoldCapacity) { m_releaseHold[m_releaseHoldCount++] = handle; }
-		else { m_deferredDeletes.push_back(handle); }
-	}
-	for (int index = 0; index < blockedCount; ++index)
-	{
-		if (m_releaseQueue.tryPush(blocked[index])) { continue; }
-		if (m_releaseHoldCount < kReleaseHoldCapacity) { m_releaseHold[m_releaseHoldCount++] = blocked[index]; }
-		else { m_deferredDeletes.push_back(blocked[index]); }
-	}
-	int kept = 0;
-	for (int index = 0; index < m_releaseHoldCount; ++index)
-	{
-		if (ownsThread(m_releaseHold[index])) { delete m_releaseHold[index]; }
-		else { m_releaseHold[kept++] = m_releaseHold[index]; }
-	}
-	m_releaseHoldCount = kept;
+    if (s_renderingThread) { return; }
+    const std::lock_guard<std::recursive_mutex> lock(m_changeMutex);
+    if (m_drainingRelease || AudioEngineWorkerThread::batchInFlight()) { return; }
+    m_drainingRelease = true;
+    struct DrainScope { bool& flag; ~DrainScope() { flag = false; } } scope{m_drainingRelease};
+    while (PlayHandle* handle = m_releaseQueue.tryPop()) { delete handle; }
+    for (auto it = m_playHandles.begin(); it != m_playHandles.end();)
+    {
+        auto* handle = *it;
+        const bool bound = handle->affinityMatters();
+        if (handle->type() == PlayHandle::Type::NotePlayHandle
+            || (bound && handle->affinity() != QThread::currentThread())
+            || (!m_playHandlesToRemove.contains(handle) && (bound || !handle->isFinished())))
+        {
+            ++it;
+            continue;
+        }
+        handle->audioBusHandle()->removePlayHandle(handle);
+        it = m_playHandles.erase(it);
+        m_playHandlesToRemove.removeAll(handle);
+        delete handle;
+    }
+}
+
+void AudioEngine::shutdownWorkersAndDrain()
+{
+    if (m_audioDev && m_audioDev->isRunning()) { m_audioDev->stopProcessing(); }
+    for (auto* timer : findChildren<QTimer*>(QString(), Qt::FindDirectChildrenOnly)) { timer->stop(); }
+    for (auto* worker : m_workers) { worker->quit(); }
+    for (auto* worker : m_workers)
+    {
+        if (worker->isRunning() && !worker->wait(3000))
+        {
+            qCritical("Audio worker still owns a job during shutdown");
+            std::abort();
+        }
+    }
+    AudioEngineWorkerThread::cancelPendingJobs();
+    const std::lock_guard<std::recursive_mutex> lock(m_changeMutex);
+    drainDeferredPlayHandles();
 }
 
 void AudioEngine::swapBuffers()
@@ -661,6 +671,7 @@ void AudioEngine::removePlayHandle(PlayHandle * ph)
 		PlayHandleList::Iterator it = std::find(m_playHandles.begin(), m_playHandles.end(), ph);
 		if (it != m_playHandles.end())
 		{
+            m_playHandlesToRemove.removeAll(ph);
 			m_playHandles.erase(it);
 			removedFromList = true;
 		}
@@ -678,7 +689,7 @@ void AudioEngine::removePlayHandle(PlayHandle * ph)
 	}
 	else
 	{
-		m_playHandlesToRemove.push_back(ph);
+		if (!m_playHandlesToRemove.contains(ph)) { m_playHandlesToRemove.push_back(ph); }
 	}
 	doneChangeInModel();
 }
@@ -700,6 +711,7 @@ void AudioEngine::removePlayHandlesOfTypes(Track * track, PlayHandle::Types type
 				NotePlayHandleManager::release((NotePlayHandle*)*it);
 			}
 			else delete *it;
+			m_playHandlesToRemove.removeAll(*it);
 			it = m_playHandles.erase(it);
 		}
 		else
@@ -717,7 +729,6 @@ void AudioEngine::requestChangeInModel()
 {
 	if (s_renderingThread) { return; }
 	m_changeMutex.lock();
-	drainDeferredPlayHandles(false);
 }
 
 void AudioEngine::doneChangeInModel()

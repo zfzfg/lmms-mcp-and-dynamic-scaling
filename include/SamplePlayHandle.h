@@ -48,7 +48,8 @@ public:
 
 	inline bool affinityMatters() const override
 	{
-		return true;
+		// Owned buses register device ports and must be destroyed on the owner thread.
+		return m_ownAudioBusHandle;
 	}
 
 

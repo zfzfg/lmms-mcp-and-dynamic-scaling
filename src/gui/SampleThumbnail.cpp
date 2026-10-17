@@ -33,7 +33,7 @@
 #include <QFileInfo>
 #include <QPainter>
 
-#include "Sample.h"
+
 
 namespace {
 	constexpr auto AggregationPerZoomStep = 10;
@@ -84,11 +84,12 @@ SampleThumbnail::Thumbnail SampleThumbnail::Thumbnail::zoomOut(float factor) con
 	return Thumbnail{std::move(peaks), m_samplesPerPeak * factor};
 }
 
-SampleThumbnail::SampleThumbnail(const Sample& sample)
-	: m_buffer(sample.buffer())
+SampleThumbnail::SampleThumbnail(std::shared_ptr<const SampleBuffer> buffer, const QString& sampleFile)
+	: m_buffer(std::move(buffer))
 {
-	const auto fileInfo = QFileInfo{sample.sampleFile()};
-	auto entry = SampleThumbnailEntry{sample.sampleFile(), fileInfo.lastModified(), fileInfo.size(), contentRevisionOf(*m_buffer)};
+	if (!m_buffer) { m_buffer = std::make_shared<const SampleBuffer>(std::vector<SampleFrame>{}, 44100); }
+	const auto fileInfo = QFileInfo{sampleFile};
+	auto entry = SampleThumbnailEntry{sampleFile, fileInfo.lastModified(), fileInfo.size(), contentRevisionOf(*m_buffer)};
 	if (!entry.filePath.isEmpty())
 	{
 		const auto it = s_sampleThumbnailCacheMap.find(entry);

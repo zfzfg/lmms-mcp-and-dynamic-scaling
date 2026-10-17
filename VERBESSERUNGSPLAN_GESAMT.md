@@ -7,6 +7,8 @@
 **Status:** Umsetzung im Arbeitsbaum am 17. Oktober 2026. Der Nachweis steht in [doc/stabilization/](doc/stabilization/baseline.md). Nicht jeder Punkt ist zur Freigabe gemessen; offene Punkte sind dort und in Abschnitt 13 benannt.  
 **Methode:** CocoIndex MCP, direkte Quellcodeprüfung, lokale Build-/Testversuche und ergänzende Prüfung offizieller technischer Dokumentation.
 
+**Nachbesserung von `64bc33825`:** Dateischutz, XML-Kompatibilität, Recoveryclaims, Workerfehler/Deadlines und Testlauncher wurden korrigiert. Nachweise: [findings.md](doc/stabilization/findings.md). 8/8 Minimaltests und 25/25 DPI-Tests bestehen jeweils in Release/Debug. Vollbuild, Engineintegration und Produkt-/Langlaufabnahme bleiben offen; lokale Vollkonfigurationen scheitern an MSVC >= 19.51 gegenüber installiertem 19.44.
+
 ## 1. Ziel und wichtigste Entscheidung
 
 LMMS soll im täglichen Arbeiten zuverlässig reagieren, Projekte sicher speichern, auch große Arrangements flüssig darstellen und bei Last oder fehlerhaften Plugins kontrolliert reagieren. Die vorhandenen Qt-Widgets-, Audio-, Journal- und MCP-Strukturen bieten dafür eine brauchbare Grundlage.

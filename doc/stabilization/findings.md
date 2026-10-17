@@ -1,6 +1,49 @@
 # Findings and fixes
 
-## Phase 2, 17 October 2026
+## Follow-up to `64bc33825`, 17 October 2026
+
+The following results apply to the uncommitted follow-up on base commit `64bc338250ae7732430fd183e7469fd5310c9ffe`. Older sections below describe earlier runs and do not certify the current application.
+
+| Area | Implemented correction | Current evidence / remaining boundary |
+| --- | --- | --- |
+| AP-F08 / loading | Parse DTD tokens, permit the historical name-only LMMS doctypes, reject external DTDs/internal subsets. CDATA and comments are not searched as declarations. UTF-8 and UTF-16 BOMs classify correctly. Remove DataFile's premature binary-size diagnosis. Configure requires linkable zlib or verified Qt 5 prefixed zlib. Decode failures report the output peak actually reached. | `ProjectCodecTest` passes on all repository `.mmp`, `.mpt` and `.xpf` fixtures, BOMs, CDATA, compressed round trips, chunk boundaries and a 2 MiB XML body. Full Song/DataFile reload is registered in `EngineStabilizationTest`, not executed. AP-F08 remains open for application acceptance. |
+| AP-F02 / bundles | Deep DOM clone without reload/upgrades. Strict version-1 manifest plus project/resource validation; no replacement based on filename alone. Resources use available destination names, including pre-suffixed collisions. Empty resource attributes remain empty. Canonical-parent target lock uses `QLockFile` with age-based stale detection disabled. External versioned JSON journal records Prepared, OldMoved, NewPublished and CleanupComplete. Recovery holds the same target lock and reconciles rename intent against actual trees. | `BundleTransactionTest` passes injected preparation/publish/rollback/cleanup faults, invalid XML/manifest/missing resource, two real concurrent publishers, independent targets, and process exit at Prepared, old-move intent, OldMoved, NewPublished and CleanupComplete. Unknown/legacy artifacts remain untouched. Full GUI export/open/normal-save still requires the integration build. |
+| AP-F10 / recovery | A shared per-source `QLockFile` guard serializes claim replacement, release and deletion. Restore rechecks original session ownership. Candidates include claim liveness; live/unknown claims block foreign deletion. Deletion failures preserve ownership records and are reported. | `RecoveryIdentityTest` exercises the production deletion helper against a real claiming child process, reclaims after that child exits, and checks a held deletion guard, unreadable claims and live session locks. `EngineStabilizationTest` adds source retention after failed save and removal after successful save; this integration target has not run. |
+| AP-F05 / lifetime | No fallback vector and no forced wrong-affinity deletion. The audio producer retains ownership when the fixed queue is full and pauses new period scheduling with failed/silent output until the owner drains it, bounding backlog growth. A 20 ms timer on the engine's owner thread drains after quiescence without model edits. Bound preview handles remain with their owner; borrowed SampleTrack handles have no owned bus to constrain destruction. Engine teardown stops the callback, joins workers, cancels unclaimed slots and drains before preview, song and mixer teardown. The audio device stop helper also aborts after its existing 30-second join limit instead of terminating a thread holding plugin state. | Queue primitive tests pass. Actual engine destructor-thread and periodic-drain and full-handoff tests are registered in `EngineStabilizationTest`, compiled in the supplemental syntax harness, not linked/run. Allocation/callback profiling and shutdown stress remain open. |
+| AP-F06/F07/F09/F13/F15 | Capture exceptions at queue execution, finish reservations and job state, expose batch failure, fail late completed waits, stop starting additional inline jobs past the deadline, and cancel pending jobs when the caller is the only consumer. Final render checks precede successful output/snapshot publication. Diagnostic accounting is synchronized. | `WorkerDeadlineTest` links the actual worker implementation without engine/decoder stubs: inline, 1 and 3 workers, delayed/throwing jobs, overflow, expired batches, cancellation of unstarted shutdown slots and subsequent reset pass. A never-returning worker runs only in a child; its destructor must fail fast after the 3-second join limit under an outer watchdog. A marked previous buffer, repeated silent callbacks and snapshot checks are registered in the unexecuted engine integration target. A running synchronous plugin still cannot be preempted. |
+| AP-F01 / Windows | Explicitly separated/sorted environment entries, Windows backslash/quote escaping, inherited standard handles, shorter internal watchdog, suspended child assigned to a kill-on-close Job Object before execution. | `WindowsLoaderTest` passes missing/present DLL, absent QT_PLUGIN_PATH, preserved sentinel, quoted/empty/trailing-backslash arguments and timeout with a real descendant process. DPI suite passes native Windows plus offscreen scales in Release and Debug. No installed-package deployment test. |
+| AP-F04 / waveform | Separate immutable storage from decoder dependencies and use the same production thumbnail renderer through a buffer constructor. Existing Sample-based callers delegate to it. | `SampleThumbnailTest` renders a QWidget into an image: empty, 1/3/101/10000 frames, stereo tail impulses, reverse and trim. Revision test changes a previously unsampled middle frame. No sanitizer run. |
+| AP-F14 / detune | Production negative-node load test plus span bounds added to the engine integration suite. | Source compiled only; piano-roll paint/undo and indexed-vs-linear GUI acceptance remain open. |
+
+### Commands and results
+
+Machine: Windows 10.0.26200, Visual Studio 17 2022, compiler MSVC 19.44.35229.0, CMake 4.4.3, Qt 5.15.2 (`C:/tmp/lmms-qt5/5.15.2/msvc2019_64`). Test runtime is supplied by the launcher; no manual Qt PATH was needed for CTest.
+
+```powershell
+cmake -S tests/minimal -B build/phase2-minimal -DLMMS_QT_MAJOR=5 "-DCMAKE_PREFIX_PATH=C:/tmp/lmms-qt5/5.15.2/msvc2019_64"
+cmake --build build/phase2-minimal --config Release --parallel 2
+ctest --test-dir build/phase2-minimal -C Release --output-on-failure
+cmake --build build/phase2-minimal --config Debug --clean-first --parallel 2
+ctest --test-dir build/phase2-minimal -C Debug --output-on-failure
+cmake --build build/dpi --config Release --parallel 2
+ctest --test-dir build/dpi -C Release --output-on-failure
+cmake --build build/dpi --config Debug --parallel 2
+ctest --test-dir build/dpi -C Debug --output-on-failure
+```
+
+Results: minimal **8/8 Release, 8/8 Debug**; DPI **25/25 Release, 25/25 Debug**. The minimal targets are SaveTransactionTest, ProjectCodecTest, BundleTransactionTest, RecoveryIdentityTest, WorkerDeadlineTest, ReleaseQueueTest, WindowsLoaderTest and SampleThumbnailTest. CTest counts executables, not individual Qt test rows.
+
+Both full configurations were attempted with `cmake -S . -B build/stabilization-on` / `build/stabilization-off`, generator `Visual Studio 17 2022`, architecture `x64`, the Qt prefix above, `WANT_QT6=OFF`, `BUILD_TESTING=ON`, and respectively `WANT_MCP=ON` / `OFF`. Both stop at `cmake/modules/DetectMachine.cmake:67`: the repository requires MSVC >= 19.51; installed is 19.44. The requirement was not bypassed. Dependency discovery/linking was not reached.
+
+A supplemental object-only compilation of modified engine, save, mixer, sample and integration-test sources succeeded through the pre-existing local `build/merge-check` harness. That harness contains decoder header stubs. It is only a syntax check, not a supported application build, linked integration test, or acceptance result.
+
+### Open acceptance and compatibility
+
+- `EngineStabilizationTest` and the existing `StabilizationTest` need a supported full MCP ON/OFF build with real dependencies. The new target checks actual DataFile saves/reloads/bundle cloning, loaded negative automation nodes, periodic handle release/affinity, stalled output/snapshots and recovery retention.
+- Unmarked legacy bundle folders are preserved and require a new export destination. Old custom `.publish-lock` / staging artifacts are not silently migrated or deleted; uncertain records require manual inspection.
+- Linux/macOS, Qt 6, sanitizer runs, an application audio-callback/plugin hang child, full callback timing, installed package, editor paint/undo, 1,000 transport cycles, 8-hour playback and listening remain open.
+
+## Phase 2, 17 October 2026 (historical)
 
 Source changes for `UMSETZUNGSPLAN_FEHLERBEHEBUNG_STABILISIERUNG.md` are in the tree. The table below records only commands that were run. A full LMMS link is still absent: this machine has Qt 5.15.2 and no complete libsndfile/vcpkg tree, so `StabilizationTest` was not linked.
 
@@ -49,5 +92,9 @@ Status after the implementation pass on 17 October 2026. "Compiled" means the tr
 | B14 | Main toolbar uses a minimum height. The browser search field uses font metrics and an accessible name. The oscilloscope has an accessible name. | Code review. | Screen reader and 125–200% layout pass. |
 | B16 / R21 | Artifact reads allow up to 512 MiB. The file hash and chunk read run through `readArtifactFile`, and the dispatcher schedules that work on the thread pool instead of holding the GUI thread for the whole read. Later chunks compare size and mtime. | `AiJobManager.cpp` and `AiCommandDispatcher.cpp` compiled. `artifactFileReadsChunksAndRejectsChanges` compiled inside `StabilizationTest.cpp` but the test executable was not linked. | A multi-minute WAV download from a running MCP client. |
 | B17 / R22 | Terminal jobs can be released. Active jobs stay capped. Young operation keys are not deleted. | `releaseFinishedJobs` and the dispatcher retention comments. | A 128-job GUI session. |
-| B18 | `DiagnosticReport` writes version, audio counters, worker timeout and overflow counts, optional GUI lag, and no project path. Help → Create diagnostic report. | `DiagnosticReport.cpp` compiled. | Deadline impact while playing. |
+| B18 | `DiagnosticReport` writes version, audio counters, worker timeout and overflow counts, optional GUI lag, and no project path. Help â†’ Create diagnostic report. | `DiagnosticReport.cpp` compiled. | Deadline impact while playing. |
 | B19 | `StabilizationTest` is registered with a 180 s timeout. Presets describe the Windows reference configure. | Contract subset executed. Full ctest needs the application link. | CI run of the new test. |
+
+## Installation follow-up discovery, 17 October 2026
+
+The installation request prompted a wider machine inventory. Visual Studio Build Tools 2026 with MSVC 19.51 is installed under Program Files (x86), alongside the previously tested VS 2022 installation. A Qt 6.8.3 SDK and real vcpkg dependencies are also available in the sibling high-DPI checkout. The earlier configure failures accurately describe the selected VS 2022 runs, but the inference that no supported local compiler exists was incorrect. A separate supported build and installation verification now follows.

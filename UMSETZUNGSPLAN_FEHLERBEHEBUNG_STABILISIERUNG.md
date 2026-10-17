@@ -3,8 +3,12 @@
 **Überarbeitet:** 17. Oktober 2026  
 **Referenzstand:** `ac688bd42e982977ca0f75796c2a54d6b8c3455b` (`Stabilize save, audio jobs, and long-session limits`)  
 **Zielgruppe:** Entwickler und nachfolgende Code-Agenten  
-**Status:** Geprüfter Arbeitsplan; die nachstehenden Maßnahmen sind noch nicht umgesetzt oder abgenommen.  
+**Status:** Teilweise implementiert; nach Prüfung von `64bc33825` nachgebessert. Vollständige Engine-/Produktabnahme bleibt offen.
 **Übergeordneter Plan:** [VERBESSERUNGSPLAN_GESAMT.md](VERBESSERUNGSPLAN_GESAMT.md)
+
+## Stand nach der Nachbesserung von `64bc33825`
+
+Die Codekorrekturen und die ausgeführten Prüfungen stehen in [findings.md](doc/stabilization/findings.md). Minimaltests: 8/8 in Release und Debug; DPI: 25/25 in Release und Debug. Bundleabbruch/-konkurrenz, Recoveryclaims, Worker-Ausnahmen/Deadline und echte Wellenform-Paints sind automatisiert geprüft. `EngineStabilizationTest` ergänzt die vollständigen Produktionspfade, wurde aber noch nicht gelinkt/ausgeführt. Beide Vollkonfigurationen MCP ON/OFF scheitern bereits an der Toolchainanforderung MSVC >= 19.51 (installiert: 19.44). Frühere Angaben zum Referenzcommit und zu nicht ausgeführten Läufen unten bleiben als ursprüngliche Prüfgrundlage erhalten.
 
 ## 1. Ziel, Prüfgrundlage und Grenzen
 
@@ -512,7 +516,7 @@ Haken setzt Paketabnahme und Nachweislink voraus. Der Lauf vom 17. Oktober 2026 
 - [ ] AP-F15: Inlinezeit/Gesamtdeadline gemessen, Architekturentscheidung abgelegt.
 - [ ] AP-F07: Mixercleanup erst nach Quieszenz, vollständiger Neustartzustand.
 - [ ] AP-F06: Stilleoutput und definierter Offlineexportfehler.
-- [x] AP-F08: Formatdiagnosen und tatsächliche Entpack-/XMLbudgets. Nachweis: `ProjectCodecTest` inkl. `qCompress`-Rundlauf, 0 übersprungen. Voller Projektload fehlt.
+- [ ] AP-F08: Wieder geöffnet nach DOCTYPE-Kompatibilitätsregression in `64bc33825`. Tokenbasierte Korrektur und Repository-/BOM-/Kompressionstests bestehen; vollständiger DataFile-/Song-Load bleibt offen. Siehe [Nachprüfung](doc/stabilization/findings.md).
 - [ ] AP-F05: Affinitätsgerechte begrenzte Freigabe samt Überlauf/Shutdown.
 - [ ] AP-F04: Halbierungsbehauptung geschlossen, reale Stereo-/Leer-/Zoomfälle geprüft.
 - [ ] AP-F12: Render-Scope und gegebenenfalls Signalbereinigung.

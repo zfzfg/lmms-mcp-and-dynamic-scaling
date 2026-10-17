@@ -106,6 +106,7 @@ void Engine::destroy()
 
 	s_projectJournal->stopAllJournalling();
 	s_audioEngine->stopProcessing();
+	s_audioEngine->shutdownWorkersAndDrain();
 
 	PresetPreviewPlayHandle::cleanup();
 

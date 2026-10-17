@@ -11,3 +11,7 @@ This is not a hard bound on the callback. `JobQueue::run()` and `ThreadableJob::
 A failed period publishes digital silence from a buffer that workers are not given. `ProjectRenderer` treats that period as a failed export and does not write it into the file. Normal rendering resumes only after `batchInFlight()` is false and the mixer cleanup has run once.
 
 No callback timings were measured in this change. Do not quote the 2–50 ms clamp as a measured end-to-end deadline.
+
+Follow-up on `64bc33825`: settled and on-time are separate conditions. A late completed wait fails, as does a captured job exception. Inline scanning stops starting further jobs after expiry; if no worker can drain the remaining slots, they are canceled and accounted before recycling. A final deadline check precedes successful output publication. Queue exceptions always finish the reservation and set terminal job state. `WorkerDeadlineTest` covers these paths with 0/1/3 workers, overflow and next-generation reset in Release/Debug; whole-callback timings and hung plugins remain unmeasured.
+
+The audio-device stop helper retains its 30-second join timeout but now aborts the process instead of terminating the callback thread. Worker joins retain their 3-second timeout. These are shutdown limits, not callback deadlines. Shutdown cancels remaining unclaimed queue slots only after producer stop and worker joins.

@@ -2,6 +2,14 @@
 
 This is not a release approval. The product changes below are in the tree. The gates that need hardware, installers, or sanitizers are open.
 
+## Follow-up on base `64bc33825`, 17 October 2026
+
+- Minimal production contracts: **8/8 Release and 8/8 Debug**, including real process contention/crash recovery, worker exceptions/late completion and painted waveform widgets.
+- Isolated DPI: **25/25 Release and 25/25 Debug**, native Windows and offscreen scale cases.
+- Full MCP ON/OFF configure attempts: **blocked** before dependency discovery because the source requires MSVC >= 19.51 and the local compiler is 19.44.
+- `EngineStabilizationTest` is registered for full integration. Its added save/reload, recovery-retention, destructor-affinity and marked-output tests have not been linked/run. See `findings.md`.
+- AP-F08 is reopened for application acceptance despite the passing codec regression tests. No release approval follows from this change.
+
 ## Done in this workspace
 
 - P0 save publication no longer reports success before `QSaveFile::commit` on the final path.
@@ -18,7 +26,7 @@ This is not a release approval. The product changes below are in the tree. The g
 
 ## Phase 2 still required
 
-The file contracts in `tests/minimal` passed on 17 October 2026. See `findings.md`. That does not close the gates below. In particular there is still no full link, no MCP ON/OFF pair, no audio stall run, and no 8-hour or listening session.
+The current file/worker/renderer contract runs are recorded in `findings.md`. There is still no full link or completed MCP ON/OFF build pair, no running-application audio stall test, and no 8-hour or listening session.
 
 ## Still required before a release
 

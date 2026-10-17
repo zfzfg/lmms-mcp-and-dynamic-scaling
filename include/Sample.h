@@ -30,6 +30,9 @@
 #include "AudioResampler.h"
 #include "Note.h"
 #include "SampleBuffer.h"
+#include "AudioEngine.h"
+#include "Engine.h"
+#include <chrono>
 #include "lmms_export.h"
 
 namespace lmms {

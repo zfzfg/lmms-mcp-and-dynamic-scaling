@@ -23,6 +23,7 @@
  */
 
 #include "Sample.h"
+#include "SampleThumbnail.h"
 
 namespace lmms {
 
@@ -191,3 +192,8 @@ void Sample::setAllPointFrames(int startFrame, int endFrame, int loopStartFrame,
 }
 
 } // namespace lmms
+
+namespace lmms::gui {
+SampleThumbnail::SampleThumbnail(const Sample& sample)
+    : SampleThumbnail(sample.buffer(), sample.sampleFile()) {}
+} // namespace lmms::gui

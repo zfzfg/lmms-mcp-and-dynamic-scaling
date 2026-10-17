@@ -23,6 +23,8 @@
  */
 
 #include <cstring>
+#include <cstdlib>
+#include <QDebug>
 
 #include "AudioDevice.h"
 #include "AudioEngine.h"
@@ -59,14 +61,12 @@ void AudioDevice::stopProcessing()
 
 void AudioDevice::stopProcessingThread( QThread * thread )
 {
-	if( !thread->wait( 30000 ) )
+	if (QThread::currentThread() == thread || !thread->wait(30000))
 	{
-		fprintf( stderr, "Terminating audio device thread\n" );
-		thread->terminate();
-		if( !thread->wait( 1000 ) )
-		{
-			fprintf( stderr, "Thread not terminated yet\n" );
-		}
+		// A callback can own plugin locks and buffers. Killing just its thread
+		// would let teardown free state still owned by an interrupted render.
+		qCritical("Audio device thread did not stop safely; aborting instead of terminating it");
+		std::abort();
 	}
 }
 

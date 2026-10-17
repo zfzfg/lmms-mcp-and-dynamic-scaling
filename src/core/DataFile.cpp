@@ -446,8 +446,10 @@ FilePublishResult DataFile::publishFile(const QString& filename, bool withResour
 		m_lastPublishResult.code = published.code;
 		m_lastPublishResult.path = published.publishedPath.isEmpty() ? bundleDir : published.publishedPath;
 		m_lastPublishResult.message = published.message;
+		m_lastPublishResult.artifacts.clear();
 		if (!published.backupPath.isEmpty()) { m_lastPublishResult.artifacts.append(published.backupPath); }
 		if (!published.stagingPath.isEmpty()) { m_lastPublishResult.artifacts.append(published.stagingPath); }
+		if (!published.journalPath.isEmpty()) { m_lastPublishResult.artifacts.append(published.journalPath); }
 		return m_lastPublishResult;
 	}
 
@@ -483,9 +485,13 @@ bool DataFile::writeFile(const QString& filename, bool withResources, bool showE
 
 std::unique_ptr<DataFile> DataFile::cloneDocument() const
 {
-	auto clone = std::make_unique<DataFile>(toByteArray(2));
+	auto clone = std::make_unique<DataFile>(m_type);
+	static_cast<QDomDocument&>(*clone) = cloneNode(true).toDocument();
+	clone->m_head = clone->documentElement().firstChildElement(QStringLiteral("head"));
+	clone->m_content = clone->documentElement().firstChildElement(typeName(m_type));
 	clone->m_fileName = m_fileName;
 	clone->m_type = m_type;
+	clone->m_fileVersion = m_fileVersion;
 	return clone;
 }
 
@@ -502,7 +508,8 @@ bool DataFile::verifyBundledReferences(const QString& resourcesDir, QString* err
 			{
 				if (!el.hasAttribute(*res)) { continue; }
 				const QString value = el.attribute(*res);
-				if (!value.startsWith(prefix) || value.contains(QStringLiteral("..")) || value.contains(QLatin1Char('\\')))
+                if (value.isEmpty()) { continue; }
+				if (!value.startsWith(prefix) || value.contains(QLatin1Char('\\')))
 				{
 					if (error) { *error = QStringLiteral("A bundled resource path is outside the bundle: %1.").arg(value); }
 					return false;
@@ -527,9 +534,6 @@ bool DataFile::verifyBundledReferences(const QString& resourcesDir, QString* err
 
 bool DataFile::copyResources(const QString& resourcesDir)
 {
-	// List of filenames used so we can append a counter to any
-	// repeating filenames
-	std::list<QString> namesList;
 
 	auto it = ELEMENTS_WITH_RESOURCES.begin();
 
@@ -549,7 +553,7 @@ bool DataFile::copyResources(const QString& resourcesDir)
 			while (res != it->second.end())
 			{
 				// If the element has that attribute
-				if (el.hasAttribute(*res))
+				if (el.hasAttribute(*res) && !el.attribute(*res).isEmpty())
 				{
 					// Get absolute path to resource
 					bool error;
@@ -562,29 +566,16 @@ bool DataFile::copyResources(const QString& resourcesDir)
 							PathUtil::basePrefix(PathUtil::Base::LocalDir).length());
 					}
 
-					// Check if we need to add a counter to the filename
-					QString finalFileName = QFileInfo(resPath).fileName();
-					QString extension = resPath.section('.', -1);
-					int repeatedNames = 0;
-					for (QString name : namesList)
-					{
-						if (finalFileName == name)
-						{
-							++repeatedNames;
-						}
-					}
-					// Add the name to the list before modifying it
-					namesList.push_back(finalFileName);
-					if (repeatedNames)
-					{
-						// Remove the extension, add the counter and add the
-						// extension again to get the final file name
-						finalFileName.truncate(finalFileName.lastIndexOf('.'));
-						finalFileName = finalFileName + "-" + QString::number(repeatedNames) + "." + extension;
-					}
-
-					// Final path is our resources dir + the new file name
-					QString finalPath = resourcesDir + "/" + finalFileName;
+                    const QFileInfo source(resPath);
+                    QString finalFileName = source.fileName();
+                    if (finalFileName.isEmpty()) { return false; }
+                    int suffix = 1;
+                    while (QFileInfo::exists(resourcesDir + "/" + finalFileName))
+                    {
+                        finalFileName = source.completeBaseName() + "-" + QString::number(suffix++);
+                        if (!source.suffix().isEmpty()) { finalFileName += "." + source.suffix(); }
+                    }
+                    const QString finalPath = resourcesDir + "/" + finalFileName;
 
 					// Copy resource file to the resources folder
 					if(!QFile::copy(resPath, finalPath))
@@ -2228,17 +2219,6 @@ void DataFile::loadData( const QByteArray & _data, const QString & _sourceFile )
 	};
 
 	QByteArray xml;
-	if (!ProjectCodec::looksLikeXml(_data) && _data.size() >= 4)
-	{
-		const auto declared = qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(_data.constData()));
-		if (declared > static_cast<quint32>(kMaxDecodedBytes))
-		{
-			reject(QStringLiteral("Declared uncompressed size %1 exceeds the %2 byte limit. The project was not unpacked.")
-				.arg(declared)
-				.arg(kMaxDecodedBytes), false);
-			return;
-		}
-	}
 
 	const auto kind = ProjectCodec::classify(_data);
 	if (kind == ProjectBytesKind::Xml)

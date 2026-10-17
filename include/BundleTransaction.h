@@ -35,18 +35,26 @@ struct BundleIoHooks
 		CreateStaging,
 		CopyResources,
 		WriteProject,
+		WriteManifest,
 		MoveOld,
 		PublishNew,
 		RollbackOld,
-		CleanupOld
+		CleanupOld,
+		PreparedCheckpoint,
+		OldMoveIntentCheckpoint,
+		OldMovedCheckpoint,
+		NewPublishedCheckpoint,
+		CleanupCheckpoint
 	};
 
 	Step failAt = Step::None;
 	int failOn = 1;
 	int seen = 0;
+	std::function<void(Step)> observe;
 
 	bool fail(Step step)
 	{
+		if (observe) { observe(step); }
 		if (step != failAt) { return false; }
 		++seen;
 		return seen == failOn;
@@ -64,6 +72,7 @@ struct BundlePublishResult
 	QString publishedPath;
 	QString backupPath;
 	QString stagingPath;
+	QString journalPath;
 };
 
 class BundleTransaction
@@ -74,8 +83,8 @@ public:
 
 	static void setHooks(BundleIoHooks* hooks);
 
-	//! A directory we may replace: not a symlink, and it contains the expected
-	//! project file or an LMMS bundle manifest. Any other existing directory is foreign.
+	//! Only a supported manifest, a parseable project and valid local resources
+	//! identify a replaceable bundle. Unmarked legacy folders are preserved.
 	static bool isIdentifiedBundle(const QString& bundleDir, const QString& projectFileName);
 
 	//! Dead Prepared staging may be removed. OldMoved is resumed or restored.

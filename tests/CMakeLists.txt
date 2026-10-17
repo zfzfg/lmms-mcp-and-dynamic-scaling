@@ -14,12 +14,15 @@ set(LMMS_TESTS
 	src/core/RelativePathsTest.cpp
 	src/core/TimelineTest.cpp
 	src/core/StabilizationTest.cpp
+	src/core/EngineStabilizationTest.cpp
 	src/core/SaveTransactionTest.cpp
 	src/core/ProjectCodecTest.cpp
 	src/core/BundleTransactionTest.cpp
 	src/core/RecoveryIdentityTest.cpp
 	src/core/ReleaseQueueTest.cpp
+	src/core/WorkerDeadlineTest.cpp
 	src/tracks/AutomationTrackTest.cpp
+	src/gui/SampleThumbnailTest.cpp
 	src/gui/DpiRasterTest.cpp
 	src/gui/EmbedDpiTest.cpp
 	src/gui/DpiCacheTest.cpp
@@ -71,7 +74,7 @@ foreach(LMMS_TEST_SRC IN LISTS LMMS_TESTS)
 
 	target_compile_features(${LMMS_TEST_NAME} PRIVATE cxx_std_20)
 	target_compile_definitions(${LMMS_TEST_NAME} PRIVATE LMMS_TESTING)
-	if(LMMS_TEST_NAME STREQUAL "StabilizationTest")
+	if(LMMS_TEST_NAME MATCHES "^(StabilizationTest|EngineStabilizationTest)$")
 		set_tests_properties(${LMMS_TEST_NAME} PROPERTIES TIMEOUT 180 LABELS "lmms-integration")
 	else()
 		set_tests_properties(${LMMS_TEST_NAME} PROPERTIES TIMEOUT 60 LABELS "lmms-small")

@@ -29,6 +29,14 @@ endfunction()
 # Add a Qt test. On Windows the launcher prepends the Qt bin directory before the
 # executable is loaded, so a missing DLL cannot open a blocking dialog first.
 function(lmms_add_qtest test_name target_name)
+    if(test_name MATCHES "^(StabilizationTest|EngineStabilizationTest)$")
+        set(_launcher_timeout 170)
+    else()
+        set(_launcher_timeout 20)
+    endif()
+    if(TARGET lmms_test_launcher)
+        add_dependencies(${target_name} lmms_test_launcher)
+    endif()
 	if(WIN32 AND TARGET lmms_test_launcher)
 		lmms_qt_core_target(_qt_core)
 		if(NOT _qt_core STREQUAL "")
@@ -36,7 +44,7 @@ function(lmms_add_qtest test_name target_name)
 				"$<TARGET_FILE:lmms_test_launcher>"
 				--prefix "$<TARGET_FILE_DIR:${_qt_core}>"
 				--plugins "$<TARGET_FILE_DIR:${_qt_core}>/../plugins"
-				--timeout 180
+				--timeout ${_launcher_timeout}
 				--
 				"$<TARGET_FILE:${target_name}>"
 				${ARGN})

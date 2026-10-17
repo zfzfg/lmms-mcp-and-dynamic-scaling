@@ -36,6 +36,7 @@
 #include <algorithm>
 
 #include <QDateTime>
+#include <QDebug>
 #include <QStandardPaths>
 #include <QTextStream>
 
@@ -760,7 +761,8 @@ QVector<ConfigManager::RecoveryCandidate> ConfigManager::recoveryCandidates() co
 	auto consider = [&](const QFileInfo& info) {
 		if (!RecoveryIdentity::isDeletableRecoveryFile(info.absoluteFilePath(), m_workingDir)) { return; }
 		if (info.absoluteFilePath() == QFileInfo(recoveryFile()).absoluteFilePath()) { return; }
-		const auto liveness = livenessOfRecovery(info.absoluteFilePath());
+		const auto claim = RecoveryIdentity::claimLiveness(info.absoluteFilePath());
+		const auto liveness = claim == ProcessLiveness::Dead ? livenessOfRecovery(info.absoluteFilePath()) : claim;
 		if (liveness == ProcessLiveness::Alive) { return; }
 		RecoveryCandidate candidate;
 		candidate.path = info.absoluteFilePath();
@@ -794,17 +796,9 @@ QStringList ConfigManager::orphanedRecoveryFiles() const
 
 bool ConfigManager::discardRecoveryFile(const QString& path)
 {
-	if (!RecoveryIdentity::isDeletableRecoveryFile(path, m_workingDir)) { return false; }
-	const QString absolute = QFileInfo(path).absoluteFilePath();
-	const bool ours = absolute == QFileInfo(recoveryFile()).absoluteFilePath();
-	if (!ours && livenessOfRecovery(absolute) != ProcessLiveness::Dead) { return false; }
-	QString lockPath = absolute;
-	lockPath.chop(static_cast<int>(QStringLiteral(".mmp").size()));
-	lockPath += QStringLiteral(".lock");
-	const bool removed = QFile::remove(absolute);
-	QFile::remove(lockPath);
-	RecoveryIdentity::releaseClaim(absolute);
-	return removed;
+    const bool removed = RecoveryIdentity::discardRecoveryFile(path, m_workingDir, recoveryFile());
+    if (!removed) { qWarning().noquote() << "Recovery deletion refused or failed; file retained:" << path; }
+    return removed;
 }
 
 void ConfigManager::retainRecoverySource(const QString& path)
