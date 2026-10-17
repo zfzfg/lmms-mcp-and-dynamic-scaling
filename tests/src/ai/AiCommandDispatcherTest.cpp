@@ -206,6 +206,8 @@ private slots:
 		instrument.appendChild(preset.createElement("organic"));
 		track.appendChild(instrument);
 		QVERIFY(preset.writeFile(directory.filePath("presets/test-organic.xpf"), false, false));
+		QVERIFY(QFile::copy(QString(LMMS_TEST_DATA_DIR) + "/presets/Organic/organ_blues.xpf",
+			directory.filePath("presets/test-legacy-organic.xpf")));
 		QFile malformed(directory.filePath("presets/malformed.xpf"));
 		QVERIFY(malformed.open(QIODevice::WriteOnly));
 		malformed.write("<incomplete"); malformed.close();

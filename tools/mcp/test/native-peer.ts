@@ -65,6 +65,11 @@ try {
      expectedRevision: (await reader.call("get_project")).projectRevision, undoGroupId: loaded.undoGroupId }, "redo-preset");
     listed = (await reader.call("list_tracks", { container: "song", limit: 500 })).items;
     assert.ok(listed.some((track: any) => track.instrumentKey === "organic"));
+    const legacy = assets.items.find((value: any) => value.name === "test-legacy-organic.xpf");
+    assert.ok(legacy);
+    await writer.call("load_asset", { assetId: legacy.assetId,
+      targetTrackId: listed.find((track: any) => track.instrumentKey === "organic").trackId,
+      projectId: beforeAsset.projectId, expectedRevision: (await reader.call("get_project")).projectRevision }, "load-legacy-preset");
   }
   process.stdout.write(JSON.stringify({ ok: true, instanceId: status.instanceId }) + "\n");
 } finally { reader.close(); writer.close(); secondWriter.close(); }

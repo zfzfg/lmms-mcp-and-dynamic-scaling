@@ -840,8 +840,21 @@ QJsonObject AiApplicationFacade::loadAsset(const QString& assetId, const QString
 		instrument.appendChild(settings);
 		element = root;
 	}
-	const QString plugin = element.firstChildElement("instrument").attribute("name");
+	QString plugin = element.firstChildElement("instrument").attribute("name");
 	const auto allowed = listInstruments("internal", {}, 500)["instruments"].toArray();
+	if (element.firstChildElement("instrument").isNull())
+	{
+		// Older bundled presets store the instrument settings directly on the track.
+		for (const auto& value : allowed)
+		{
+			const auto key = value.toObject()["key"].toString();
+			if (!element.firstChildElement(key).isNull())
+			{
+				if (!plugin.isEmpty()) { return failure(ErrorCode::ValidationError, "Ambiguous preset instruments."); }
+				plugin = key;
+			}
+		}
+	}
 	bool found = false;
 	for (const auto& value : allowed)
 	{

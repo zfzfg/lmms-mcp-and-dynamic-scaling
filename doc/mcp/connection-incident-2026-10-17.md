@@ -52,3 +52,9 @@ Dies ist ein reproduzierter Fehlerpfad des untersuchten Codes. Ohne Dump der urs
 ### Verbleibende Grenzen
 
 Kein automatischer Wechsel zu einer anderen Instanz und keine automatische Wiederholung einer Mutation. Nach einem Neustart muss der Host die neue Verbindungsdatei verwenden. Eine Produktabnahme mit realer Audiowiedergabe, anderen Betriebssystemen und installierten Paketen ist nicht Teil dieser gezielten Reparatur. Die laufende Gesangssitzung wurde nicht verändert; die Begleitung zu „Light Through the Rain“ wurde nicht erstellt.
+
+## Ergänzung aus der Installationsvorbereitung
+
+Der Test des bereitgestellten Pakets mit dem mitgelieferten `Organic/organ_blues.xpf` zeigte zusätzlich, dass ältere Presets die Instrumenteinstellungen direkt unter der Spur speichern. Der MCP-Adapter akzeptiert nun auch diese vom nativen Loader unterstützte Form, sofern genau ein zugelassenes internes Instrument erkannt wird. Mehrdeutige Instrumentauswahl wird abgelehnt. Ein Regressionstest verwendet die echte mitgelieferte Datei.
+
+Die vorbereitete Installation wurde mit einem temporären Profil und System-PATH über den gebündelten nativen MCP-Launcher und dessen private Node-Runtime geprüft: 22 Tools, Organic und TripleOscillator anlegen, Undo/Redo und Laden des älteren Organic-Presets bestanden. Die Übersetzungskataloge wurden für das Paket erzeugt; Benutzerprojekte und persönliche Konfiguration wurden dafür nicht geöffnet.
