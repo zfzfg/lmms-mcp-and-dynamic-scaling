@@ -98,3 +98,20 @@ Status after the implementation pass on 17 October 2026. "Compiled" means the tr
 ## Installation follow-up discovery, 17 October 2026
 
 The installation request prompted a wider machine inventory. Visual Studio Build Tools 2026 with MSVC 19.51 is installed under Program Files (x86), alongside the previously tested VS 2022 installation. A Qt 6.8.3 SDK and real vcpkg dependencies are also available in the sibling high-DPI checkout. The earlier configure failures accurately describe the selected VS 2022 runs, but the inference that no supported local compiler exists was incorrect. A separate supported build and installation verification now follows.
+
+
+## Verified local installation, 17 October 2026
+
+The follow-up used Visual Studio Build Tools 2026 / MSVC 19.51, Qt 6.8.3 and the real vcpkg libraries from the sibling checkout. Source commit `5f4cc927f` builds successfully as a complete x64 Release application with MCP enabled and the selected instruments/plugins. This supersedes earlier statements that a full local link was unavailable; those earlier runs used a different toolchain.
+
+- Full application CTest: **69/69 passed**, including `StabilizationTest`, `EngineStabilizationTest`, DPI widgets, Windows loader and the native Node-to-Qt MCP integration.
+- Companion `npm test`: **9/9 passed**.
+- Package version invocation, native Windows GUI initialization (hidden window titled `Untitled - LMMS 1.3.0-alpha`) and normal window-close shutdown succeeded with a clean system-only PATH. Loaded Qt, PortAudio and libsndfile DLLs came from the package.
+- CLI WAV export succeeded both before and after relocation: stereo PCM16, 44,100 Hz, 151,040 frames (3.42494 seconds), peak 25,951 and RMS 6,497.60. The render report states success and exit code 0.
+- Installed at `%LOCALAPPDATA%/Programs/LMMS-High-DPI`; previous binaries retained at `%LOCALAPPDATA%/Programs/LMMS-High-DPI.backup-20261017-5f4cc927f`. Existing shortcuts remain valid. The SHA-256 of the separate user configuration was unchanged during installation; user projects were not modified.
+
+The full build exposed and fixed direct Qt include dependencies, MCP widget header paths, root CTest discovery, a C++17 requirement in the Windows test child, and two test-fixture assumptions. The native MCP test also exposed a real Windows sharing violation: `QTemporaryFile::close()` retains its native handle. The secured temporary connection file is now destroyed before atomic publication without replacement.
+
+Evidence remains in the ignored local `build/` directory: `user-build.log`, `user-tests.log`, `user-mcp-test.log`, `dispatcher-result.txt`, `user-stage-install.log`, and `install-smoke/`.
+
+This is a local installation acceptance, not completion of all release gates. A full MCP-OFF build, full Qt 5 reference build, sanitizers, 1,000 start/stop cycles, eight-hour playback, visual multi-monitor/hardware checks and listening acceptance remain open. The hidden GUI smoke test does not substitute for those checks.

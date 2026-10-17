@@ -51,3 +51,14 @@ That executable covers the thread pool, profiler accounting, and display snapsho
 - `npm --prefix tools/mcp test` was not repeated in this pass. The plan's earlier run was 9/9 on the previous tree.
 - `ctest` of `build/dpi` was not repeated.
 - A full `cmake -S . -B build/reference-qt5` was not completed because libsndfile and the rest of the vcpkg set are not installed here.
+
+
+## Local installation acceptance, 17 October 2026
+
+See the dated installation record in `findings.md` for the superseding evidence: full MSVC 19.51 / Qt 6.8.3 Release link with MCP ON; 69/69 application CTest tests; 9/9 companion tests; package startup/shutdown and non-silent WAV export with a clean PATH; installation and rollback copy preserved. The earlier “no full link” and “commands that did not run” paragraphs above are historical results of the earlier pass.
+
+- [x] Installed Qt 6 package starts with a clean PATH and renders a checked WAV.
+- [x] Full Qt 6 Release application tests, including engine and native MCP integration.
+- [ ] Full MCP OFF build and tests.
+- [ ] Full Qt 5 reference build and tests.
+- [ ] Remaining platform, sanitizer, long-duration and hardware/manual release gates listed above.
