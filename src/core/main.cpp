@@ -867,10 +867,10 @@ int main( int argc, char * * argv )
 		srand( getpid() + time( 0 ) );
 
 		// recover a file?
-		QString recoveryFile = ConfigManager::inst()->recoveryFile();
+		QStringList orphanedRecovery = ConfigManager::inst()->orphanedRecoveryFiles();
+		QString recoveryFile = orphanedRecovery.isEmpty() ? QString() : orphanedRecovery.first();
 
-		bool recoveryFilePresent = QFileInfo( recoveryFile ).exists() &&
-				QFileInfo( recoveryFile ).isFile();
+		bool recoveryFilePresent = !recoveryFile.isEmpty();
 		bool autoSaveEnabled =
 			ConfigManager::inst()->value( "ui", "enableautosave" ).toInt();
 		if( recoveryFilePresent )
@@ -927,6 +927,10 @@ int main( int argc, char * * argv )
 			mb.exec();
 			if( mb.clickedButton() == discard )
 			{
+				for (const auto& orphan : orphanedRecovery)
+				{
+					ConfigManager::inst()->discardRecoveryFile(orphan);
+				}
 				getGUI()->mainWindow()->sessionCleanup();
 			}
 			else if( mb.clickedButton() == recover ) // Recover
@@ -961,6 +965,10 @@ int main( int argc, char * * argv )
 			if( fileToLoad == recoveryFile )
 			{
 				Engine::getSong()->createNewProjectFromTemplate( fileToLoad );
+				if (Engine::getSong()->lastLoadError().isEmpty())
+				{
+					ConfigManager::inst()->discardRecoveryFile(recoveryFile);
+				}
 			}
 			else
 			{

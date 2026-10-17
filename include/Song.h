@@ -264,6 +264,8 @@ public:
 		return m_loadingProject;
 	}
 
+	const QString& lastLoadError() const { return m_lastLoadError; }
+
 	void loadingCancelled()
 	{
 		m_isCancelled = true;
@@ -431,6 +433,7 @@ private:
 	bool m_savingProject;
 	bool m_loadingProject;
 	bool m_isCancelled;
+	QString m_lastLoadError;
 
 	SaveOptions m_saveOptions;
 

@@ -25,6 +25,8 @@
 #ifndef LMMS_REMOTE_PLUGIN_H
 #define LMMS_REMOTE_PLUGIN_H
 
+#include <atomic>
+
 #include <QThread>
 #include <QProcess>
 #include <QRecursiveMutex>
@@ -83,17 +85,63 @@ public:
 #endif // DEBUG_REMOTE_PLUGIN
 	}
 
+	enum class State
+	{
+		Starting,
+		Ready,
+		Processing,
+		Failed,
+		Stopping,
+		Stopped
+	};
+
+	State state() const
+	{
+		return m_state.load(std::memory_order_acquire);
+	}
+
+	// Audio deadlines missed while the plugin process was still alive.
+	// A successful reinit clears this.
+	int failureCount() const
+	{
+		return m_failureCount.load(std::memory_order_acquire);
+	}
+
 	bool init( const QString &pluginExecutable, bool waitForInitDoneMsg, QStringList extraArgs = {} );
 
 	inline void waitForHostInfoGotten()
 	{
-		m_failed = waitForMessage( IdHostInfoGotten ).id
-							!= IdHostInfoGotten;
+		const bool ok = waitForMessage(IdHostInfoGotten, false,
+						kRemotePluginInitTimeoutMs).id == IdHostInfoGotten;
+		if (!ok)
+		{
+			failInitWait();
+			return;
+		}
+		if (state() != State::Failed)
+		{
+			m_failed.store(false, std::memory_order_release);
+		}
 	}
 
 	inline void waitForInitDone( bool _busyWaiting = true )
 	{
-		m_failed = waitForMessage( IdInitDone, _busyWaiting ).id != IdInitDone;
+		const bool ok = waitForMessage(IdInitDone, _busyWaiting,
+						kRemotePluginInitTimeoutMs).id == IdInitDone;
+		if (!ok)
+		{
+			failInitWait();
+			return;
+		}
+		if (state() == State::Starting)
+		{
+			transitionTo(State::Ready);
+		}
+		if (state() == State::Ready)
+		{
+			m_failed.store(false, std::memory_order_release);
+			m_failureCount.store(0, std::memory_order_release);
+		}
 	}
 
 	bool processMessage( const message & _m ) override;
@@ -106,7 +154,7 @@ public:
 	{
 		lock();
 		sendMessage( message( IdSampleRateInformation ).addInt( _sr ) );
-		waitForMessage( IdInformationUpdated, true );
+		waitForMessage( IdInformationUpdated, true, kRemotePluginMessageTimeoutMs );
 		unlock();
 	}
 
@@ -123,13 +171,14 @@ public:
 		lock();
 		sendMessage( IdIsUIVisible );
 		unlock();
-		message m = waitForMessage( IdIsUIVisible );
+		message m = waitForMessage( IdIsUIVisible, false, kRemotePluginMessageTimeoutMs );
 		return m.id != IdIsUIVisible ? -1 : m.getInt() ? 1 : 0;
 	}
 
 	inline bool failed() const
 	{
-		return m_failed;
+		return m_failed.load(std::memory_order_acquire)
+			|| m_state.load(std::memory_order_acquire) == State::Failed;
 	}
 
 	inline void lock()
@@ -153,8 +202,18 @@ protected:
 	}
 
 
-	bool m_failed;
+	// Subclasses may record a failed load before the process starts.
+	std::atomic<bool> m_failed{true};
+
 private:
+	bool transitionTo(State next);
+	static bool isLegalTransition(State from, State to);
+	void failInitWait();
+	void failAudioWait(int deadlineMs);
+
+	std::atomic<State> m_state{State::Stopped};
+	std::atomic<int> m_failureCount{0};
+
 	void resizeSharedProcessingMemory();
 
 

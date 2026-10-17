@@ -1,7 +1,15 @@
 #include "AiCommandDispatcher.h"
 
+#include <atomic>
+#include <chrono>
+#include <memory>
+
+#include <QJsonDocument>
 #include <QMetaObject>
+#include <QPointer>
 #include <exception>
+
+#include "ThreadPool.h"
 
 #include "AiApplicationFacade.h"
 #include "AiControlService.h"
@@ -27,6 +35,23 @@ AiCommandDispatcher::AiCommandDispatcher()
 }
 
 namespace {
+const QStringList& mutationActions()
+{
+	static const QStringList actions{"apply_changes", "create_instrument_track", "load_asset", "set_transport", "undo",
+		"redo", "start_render", "save_project_copy", "cancel_job"};
+	return actions;
+}
+
+bool isMutationAction(const QString& action)
+{
+	return mutationActions().contains(action);
+}
+
+QJsonObject shutdownResponse()
+{
+	return {{"ok", false}, {"error", DomainError{ErrorCode::Cancelled, "Service restarted."}.toJson()}};
+}
+
 DomainError checkPermissions(const QString& action, Permission permissions)
 {
 	if (!hasPermission(permissions, Permission::Read))
@@ -60,6 +85,15 @@ void AiCommandDispatcher::dispatch(qint64 requestId, const QString& action, cons
 	auto reject = [&](DomainError error) {
 		if (callback) { callback({{"ok", false}, {"error", error.toJson()}}); }
 	};
+	{
+		QMutexLocker lock(&m_mutex);
+		if (m_shuttingDown)
+		{
+			lock.unlock();
+			reject({ErrorCode::Cancelled, "Service restarted."});
+			return;
+		}
+	}
 	const auto effective = static_cast<Permission>(static_cast<uint32_t>(grantedPermissions)
 		& static_cast<uint32_t>(AiControlService::instance()->grantedPermissions()));
 	const auto permissionError = checkPermissions(action, effective);
@@ -78,8 +112,7 @@ void AiCommandDispatcher::dispatch(qint64 requestId, const QString& action, cons
 		reject({ErrorCode::Timeout, "Deadline already expired."});
 		return;
 	}
-	const QStringList mutations{"apply_changes", "create_instrument_track", "load_asset", "set_transport", "undo",
-		"redo", "start_render", "save_project_copy", "cancel_job"};
+	const QStringList& mutations = mutationActions();
 	if (mutations.contains(action) && operationKey.isEmpty())
 	{
 		reject({ErrorCode::ValidationError, "Mutation requires operationKey."});
@@ -102,6 +135,12 @@ void AiCommandDispatcher::dispatch(qint64 requestId, const QString& action, cons
 		return;
 	}
 	QMutexLocker lock(&m_mutex);
+	if (m_shuttingDown)
+	{
+		lock.unlock();
+		reject({ErrorCode::Cancelled, "Service restarted."});
+		return;
+	}
 	if (!operationKey.isEmpty() && m_operations.contains(operationKey))
 	{
 		auto& op = m_operations[operationKey];
@@ -128,7 +167,9 @@ void AiCommandDispatcher::dispatch(qint64 requestId, const QString& action, cons
 		return;
 	}
 	const auto now = QDateTime::currentMSecsSinceEpoch();
-	// Completed keys are guaranteed for 24 hours. Never evict active/recent operations.
+	// Completed keys are replayable for 24 hours. Never drop a younger key, and
+	// never drop a key that is still incomplete. Large non-mutation bodies may
+	// be compacted; mutation responses stay intact for idempotent replay.
 	for (auto it = m_operations.begin(); it != m_operations.end();)
 	{
 		if (it->completed && now - it->completedAtEpochMs > 24LL * 3600 * 1000) { it = m_operations.erase(it); }
@@ -138,8 +179,22 @@ void AiCommandDispatcher::dispatch(qint64 requestId, const QString& action, cons
 	{
 		if (m_operations.size() >= MAX_OPERATION_HISTORY)
 		{
+			trimBulkyCompletedResponsesLocked();
+			if (m_operations.size() >= MAX_OPERATION_HISTORY)
+			{
+				const int retained = m_operations.size();
+				lock.unlock();
+				reject({ErrorCode::Busy,
+					QString("Operation register is full: %1 young keys are retained for 24 hours. Waiting for those "
+							"keys to expire frees a slot.")
+						.arg(retained)});
+				return;
+			}
+		}
+		if (m_shuttingDown)
+		{
 			lock.unlock();
-			reject({ErrorCode::Busy, "Operation register full."});
+			reject({ErrorCode::Cancelled, "Service restarted."});
 			return;
 		}
 		OperationRecord op;
@@ -163,20 +218,93 @@ void AiCommandDispatcher::dispatch(qint64 requestId, const QString& action, cons
 	emit commandEnqueued();
 }
 
+void AiCommandDispatcher::takePendingCallbacksLocked(QList<std::function<void(const QJsonObject&)>>& callbacks)
+{
+	while (!m_queue.isEmpty())
+	{
+		QueuedCommand command = m_queue.dequeue();
+		if (command.callback) { callbacks.append(std::move(command.callback)); }
+	}
+	const QJsonObject cancelled = shutdownResponse();
+	const auto now = QDateTime::currentMSecsSinceEpoch();
+	for (auto it = m_operations.begin(); it != m_operations.end(); ++it)
+	{
+		if (it->completed) { continue; }
+		for (auto& waiter : it->waiters)
+		{
+			if (waiter) { callbacks.append(std::move(waiter)); }
+		}
+		it->waiters.clear();
+		it->completed = true;
+		it->completedAtEpochMs = now;
+		it->responseData = cancelled;
+	}
+	if (m_inFlightCallbackPending && m_inFlightCallback)
+	{
+		callbacks.append(std::move(m_inFlightCallback));
+		m_inFlightCallback = nullptr;
+		m_inFlightCallbackPending = false;
+	}
+	m_asyncBusy = false;
+	m_asyncCommand = {};
+}
+
+void AiCommandDispatcher::trimBulkyCompletedResponsesLocked()
+{
+	for (auto it = m_operations.begin(); it != m_operations.end(); ++it)
+	{
+		if (!it->completed || isMutationAction(it->action)) { continue; }
+		it->responseData = retainedResponse(it->action, it->responseData);
+	}
+}
+
+QJsonObject AiCommandDispatcher::retainedResponse(const QString& action, const QJsonObject& response) const
+{
+	// Mutation replay must observe the original result. Reads may keep only
+	// ok/error identity once the stored JSON exceeds 64 KiB.
+	if (isMutationAction(action)) { return response; }
+	if (QJsonDocument(response).toJson(QJsonDocument::Compact).size() <= MAX_RETAINED_RESPONSE_BYTES)
+	{
+		return response;
+	}
+	QJsonObject stub;
+	stub["ok"] = response.value("ok");
+	if (response.contains("error")) { stub["error"] = response.value("error"); }
+	stub["message"] = "Bulky payload was trimmed.";
+	return stub;
+}
+
 void AiCommandDispatcher::reset()
 {
-	QQueue<QueuedCommand> commands;
+	QList<std::function<void(const QJsonObject&)>> callbacks;
 	{
 		QMutexLocker lock(&m_mutex);
-		commands.swap(m_queue);
+		m_shuttingDown = false;
+		takePendingCallbacksLocked(callbacks);
 		m_operations.clear();
+		m_operationHistory.clear();
+		m_isProcessing = false;
 	}
-	for (const auto& command : commands)
-		if (command.callback)
-		{
-			command.callback(
-				{{"ok", false}, {"error", DomainError{ErrorCode::Cancelled, "Service restarted."}.toJson()}});
-		}
+	const QJsonObject cancelled = shutdownResponse();
+	for (const auto& callback : callbacks)
+	{
+		if (callback) { callback(cancelled); }
+	}
+}
+
+void AiCommandDispatcher::beginShutdown()
+{
+	QList<std::function<void(const QJsonObject&)>> callbacks;
+	{
+		QMutexLocker lock(&m_mutex);
+		m_shuttingDown = true;
+		takePendingCallbacksLocked(callbacks);
+	}
+	const QJsonObject cancelled = shutdownResponse();
+	for (const auto& callback : callbacks)
+	{
+		if (callback) { callback(cancelled); }
+	}
 }
 
 bool AiCommandDispatcher::lookupOperation(const QString& opKey, QJsonObject& outResult) const
@@ -187,33 +315,73 @@ bool AiCommandDispatcher::lookupOperation(const QString& opKey, QJsonObject& out
 	return true;
 }
 
-void AiCommandDispatcher::processNextCommand()
+void AiCommandDispatcher::finishCommand(const QueuedCommand& cmd, const QJsonObject& response)
+{
+	AiControlService::instance()->recordResult(cmd.action, response);
+	QList<std::function<void(const QJsonObject&)>> waiters;
+	bool deliverInFlight = false;
+	std::function<void(const QJsonObject&)> callback;
+	{
+		QMutexLocker lock(&m_mutex);
+		if (!cmd.operationKey.isEmpty() && m_operations.contains(cmd.operationKey))
+		{
+			auto& op = m_operations[cmd.operationKey];
+			if (!op.completed)
+			{
+				op.responseData = retainedResponse(cmd.action, response);
+				op.completed = true;
+				op.completedAtEpochMs = QDateTime::currentMSecsSinceEpoch();
+				waiters.swap(op.waiters);
+			}
+		}
+		if (m_inFlightCallbackPending)
+		{
+			deliverInFlight = true;
+			m_inFlightCallbackPending = false;
+			callback = std::move(m_inFlightCallback);
+			m_inFlightCallback = nullptr;
+		}
+	}
+	if (deliverInFlight && callback) { callback(response); }
+	for (const auto& waiter : waiters)
+	{
+		if (waiter) { waiter(response); }
+	}
+}
+
+void AiCommandDispatcher::completeAsyncRead(const QJsonObject& result)
 {
 	QueuedCommand cmd;
 	{
+		QMutexLocker lock(&m_mutex);
+		if (!m_asyncBusy) { return; }
+		m_asyncBusy = false;
+		cmd = std::move(m_asyncCommand);
+		m_asyncCommand = {};
+	}
+	finishCommand(cmd, result);
+	emit commandEnqueued();
+}
+
+void AiCommandDispatcher::processNextCommand()
+{
+	QueuedCommand cmd;
+	bool cancelled = false;
+	{
 		QMutexLocker locker(&m_mutex);
-		if (m_queue.isEmpty()) { return; }
+		if (m_asyncBusy || m_queue.isEmpty()) { return; }
 		cmd = m_queue.dequeue();
+		m_inFlightCallbackPending = static_cast<bool>(cmd.callback);
+		m_inFlightCallback = cmd.callback;
+		cancelled = m_shuttingDown;
 	}
 
-	auto finish = [&](const QJsonObject& response) {
-		AiControlService::instance()->recordResult(cmd.action, response);
-		QList<std::function<void(const QJsonObject&)>> waiters;
-		if (!cmd.operationKey.isEmpty())
-		{
-			QMutexLocker lock(&m_mutex);
-			auto& op = m_operations[cmd.operationKey];
-			op.responseData = response;
-			op.completed = true;
-			op.completedAtEpochMs = QDateTime::currentMSecsSinceEpoch();
-			waiters.swap(op.waiters);
-		}
-		if (cmd.callback) { cmd.callback(response); }
-		for (const auto& waiter : waiters)
-		{
-			if (waiter) { waiter(response); }
-		}
-	};
+	auto finish = [&](const QJsonObject& response) { finishCommand(cmd, response); };
+	if (cancelled)
+	{
+		finish(shutdownResponse());
+		return;
+	}
 	DomainError error;
 	auto* service = AiControlService::instance();
 	const auto current = static_cast<Permission>(
@@ -236,6 +404,15 @@ void AiCommandDispatcher::processNextCommand()
 	if (error.hasError())
 	{
 		finish({{"ok", false}, {"error", error.toJson()}});
+		return;
+	}
+	{
+		QMutexLocker locker(&m_mutex);
+		cancelled = m_shuttingDown;
+	}
+	if (cancelled)
+	{
+		finish(shutdownResponse());
 		return;
 	}
 	QJsonObject res;
@@ -339,8 +516,53 @@ void AiCommandDispatcher::processNextCommand()
 		else if (cmd.action == "cancel_job") { res = facade->cancelJob(cmd.payload["jobId"].toString()); }
 		else if (cmd.action == "read_artifact")
 		{
-			res = AiJobManager::instance()->readArtifact(cmd.payload["artifactId"].toString(),
-				cmd.payload["offset"].toVariant().toLongLong(), cmd.payload["limit"].toInt(256 * 1024));
+			const QString artifactId = cmd.payload["artifactId"].toString();
+			const qint64 offset = cmd.payload["offset"].toVariant().toLongLong();
+			const int limit = cmd.payload["limit"].toInt(256 * 1024);
+			{
+				QMutexLocker lock(&m_mutex);
+				m_asyncBusy = true;
+				m_asyncCommand = cmd;
+			}
+			auto accepted = std::make_shared<std::atomic<bool>>(false);
+			QPointer<AiCommandDispatcher> self(this);
+			auto future = ThreadPool::instance().enqueue([self, artifactId, offset, limit, accepted] {
+				accepted->store(true, std::memory_order_release);
+				QJsonObject result;
+				try
+				{
+					result = AiJobManager::instance()->readArtifact(artifactId, offset, limit);
+				}
+				catch (const std::exception&)
+				{
+					result = {{"ok", false},
+						{"error", DomainError{ErrorCode::InternalError, "Artifact read failed."}.toJson()}};
+				}
+				catch (...)
+				{
+					result = {{"ok", false},
+						{"error", DomainError{ErrorCode::InternalError, "Artifact read failed."}.toJson()}};
+				}
+				if (!self) { return; }
+				QMetaObject::invokeMethod(
+					self.data(), [self, result] {
+						if (self) { self->completeAsyncRead(result); }
+					},
+					Qt::QueuedConnection);
+			});
+			const bool rejected = future.wait_for(std::chrono::seconds(0)) == std::future_status::ready
+				&& !accepted->load(std::memory_order_acquire);
+			if (rejected)
+			{
+				{
+					QMutexLocker lock(&m_mutex);
+					m_asyncBusy = false;
+					m_asyncCommand = {};
+				}
+				finish({{"ok", false},
+					{"error", DomainError{ErrorCode::Busy, "Artifact read could not be started."}.toJson()}});
+			}
+			return;
 		}
 		else if (cmd.action == "get_operation")
 		{

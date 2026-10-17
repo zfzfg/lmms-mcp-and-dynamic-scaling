@@ -42,17 +42,20 @@
 #include <QMessageBox>
 #include <QScreen>
 #include <QShortcut>
+#include <QSizePolicy>
 #include <QSplitter>
 
 #include "AboutDialog.h"
 #include "AutomationEditor.h"
 #include "ControllerRackView.h"
 #include "DeprecationHelper.h"
+#include "DiagnosticReport.h"
 #include "embed.h"
 #include "Engine.h"
 #include "ExportProjectDialog.h"
 #include "FileBrowser.h"
 #include "FileDialog.h"
+#include "GuiResponsiveness.h"
 #include "Metronome.h"
 #include "MixerView.h"
 #include "GuiApplication.h"
@@ -201,7 +204,9 @@ MainWindow::MainWindow() :
 	// create global-toolbar at the top of our window
 	m_toolBar = new QWidget( main_widget );
 	m_toolBar->setObjectName( "mainToolbar" );
-	m_toolBar->setFixedHeight( 64 );
+	m_toolBar->setMinimumHeight( 64 );
+	m_toolBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+	m_toolBar->setAccessibleName(tr("Transport and tools"));
 	m_toolBar->move( 0, 0 );
 
 	// add layout for organizing quite complex toolbar-layouting
@@ -217,6 +222,7 @@ MainWindow::MainWindow() :
 	setCentralWidget( main_widget );
 
 	m_updateTimer.start( 1000 / 60, this );  // 60 fps
+	new GuiResponsiveness(this);
 
 	if( ConfigManager::inst()->value( "ui", "enableautosave" ).toInt() )
 	{
@@ -388,6 +394,7 @@ void MainWindow::finalize()
 		help_menu->addAction( embed::getIcon("help"),
 						tr( "Online Help" ),
 						this, SLOT(browseHelp()));
+		help_menu->addAction(tr("Create diagnostic report..."), this, SLOT(exportDiagnostics()));
 	}
 	else
 	{
@@ -1290,8 +1297,8 @@ void MainWindow::closeEvent( QCloseEvent * _ce )
 
 void MainWindow::sessionCleanup()
 {
-	// delete recover session files
-	QFile::remove( ConfigManager::inst()->recoveryFile() );
+	// Remove only this process's recovery file. Another instance keeps its own.
+	ConfigManager::inst()->discardRecoveryFile(ConfigManager::inst()->recoveryFile());
 	setSession( SessionState::Normal );
 }
 
@@ -1415,6 +1422,26 @@ void MainWindow::showTool( QAction * _idx )
 
 
 
+void MainWindow::exportDiagnostics()
+{
+	const QString path = FileDialog::getSaveFileName(this, tr("Save diagnostic report"),
+		ConfigManager::inst()->userProjectsDir() + "/lmms-diagnostics.txt", tr("Text file (*.txt)"));
+	if (path.isEmpty()) { return; }
+	QString error;
+	lmms::DiagnosticExtras extras;
+	if (auto* responsiveness = findChild<GuiResponsiveness*>())
+	{
+		extras.guiLagMs = responsiveness->lastLagMs();
+		extras.guiLagMaxMs = responsiveness->maxLagMs();
+	}
+	if (!lmms::DiagnosticReport::writeTo(path, &error, extras))
+	{
+		statusBar()->showMessage(tr("Could not write the diagnostic report: %1").arg(error), 8000);
+		return;
+	}
+	statusBar()->showMessage(tr("Diagnostic report written. It does not include the project or connection tokens."), 8000);
+}
+
 void MainWindow::browseHelp()
 {
 	// file:// alternative for offline help
@@ -1436,7 +1463,13 @@ void MainWindow::autoSave()
 				"enablerunningautosave" ).toInt() ||
 			! Engine::getSong()->isPlaying() ) )
 	{
-		Engine::getSong()->saveProjectFile(ConfigManager::inst()->recoveryFile());
+		const bool saved = Engine::getSong()->saveProjectFile(ConfigManager::inst()->recoveryFile());
+		if (!saved)
+		{
+			statusBar()->showMessage(tr("Autosave failed. The project is still unsaved. LMMS will try again shortly."), 10000);
+			autoSaveTimerReset(m_autoSaveShortTime);
+			return;
+		}
 		autoSaveTimerReset();  // Reset timer
 	}
 	else

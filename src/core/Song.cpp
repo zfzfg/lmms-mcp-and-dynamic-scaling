@@ -33,6 +33,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QMessageBox>
 
 #include <algorithm>
@@ -1027,10 +1028,38 @@ void Song::loadProject( const QString & fileName )
 
 	QDomNode node;
 
-	m_loadingProject = true;
+	// Restores the loading flag and journal mode on every exit, including the
+	// failure path that used to return before either was reset.
+	struct LoadScope
+	{
+		Song* song;
+		bool previousLoading;
+		bool previousJournal;
+		bool active = true;
 
-	Engine::projectJournal()->setJournalling( false );
+		explicit LoadScope(Song* owner)
+			: song(owner)
+			, previousLoading(owner->m_loadingProject)
+			, previousJournal(Engine::projectJournal()->isJournalling())
+		{
+			owner->m_loadingProject = true;
+			Engine::projectJournal()->setJournalling(false);
+		}
 
+		void restore()
+		{
+			if (!active) { return; }
+			song->m_loadingProject = previousLoading;
+			Engine::projectJournal()->setJournalling(previousJournal);
+			active = false;
+		}
+
+		void dismiss() { active = false; }
+
+		~LoadScope() { restore(); }
+	} scope(this);
+
+	m_lastLoadError.clear();
 	m_oldFileName = m_fileName;
 	setProjectFileName(fileName);
 
@@ -1068,8 +1097,30 @@ void Song::loadProject( const QString & fileName )
 
 	if (cantLoadProject)
 	{
+		const QString backup = fileName + QStringLiteral(".bak");
+		if (getGUI() != nullptr && !QFileInfo::exists(fileName) && QFileInfo::exists(backup))
+		{
+			const auto answer = QMessageBox::question(nullptr, tr("Project backup"),
+				tr("The project file is missing. A backup is available at %1. Open the backup?").arg(backup),
+				QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+			if (answer == QMessageBox::Yes)
+			{
+				scope.restore();
+				setProjectFileName(m_oldFileName);
+				loadProject(backup);
+				return;
+			}
+		}
+		m_lastLoadError = dataFile.lastLoadError();
+		if (!m_lastLoadError.isEmpty()) { qWarning().noquote() << m_lastLoadError; }
+		const auto artifacts = DataFile::existingSaveArtifacts(fileName);
+		if (!artifacts.isEmpty())
+		{
+			qWarning().noquote() << "Unpublished save artifacts remain:" << artifacts.join(QStringLiteral(", "));
+		}
 		if( m_loadOnLaunch )
 		{
+			scope.restore();
 			createNewProject();
 		}
 		setProjectFileName(m_oldFileName);
@@ -1203,6 +1254,7 @@ void Song::loadProject( const QString & fileName )
 	if( isCancelled() )
 	{
 		m_isCancelled = false;
+		scope.restore();
 		createNewProject();
 		return;
 	}
@@ -1221,6 +1273,7 @@ void Song::loadProject( const QString & fileName )
 	}
 
 	m_loadingProject = false;
+	scope.dismiss();
 #ifdef LMMS_HAVE_MCP
 	if (ai::AiControlService::instance()->isRunning()) { ai::AiControlService::instance()->setReady(true); }
 #endif

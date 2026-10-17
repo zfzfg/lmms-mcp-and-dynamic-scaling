@@ -11,6 +11,7 @@ set(LMMS_TESTS
 	src/core/ProjectVersionTest.cpp
 	src/core/RelativePathsTest.cpp
 	src/core/TimelineTest.cpp
+	src/core/StabilizationTest.cpp
 	src/tracks/AutomationTrackTest.cpp
 	src/gui/DpiRasterTest.cpp
 	src/gui/EmbedDpiTest.cpp
@@ -63,4 +64,5 @@ foreach(LMMS_TEST_SRC IN LISTS LMMS_TESTS)
 
 	target_compile_features(${LMMS_TEST_NAME} PRIVATE cxx_std_20)
 	target_compile_definitions(${LMMS_TEST_NAME} PRIVATE LMMS_TESTING)
+	set_tests_properties(${LMMS_TEST_NAME} PROPERTIES TIMEOUT 180)
 endforeach()

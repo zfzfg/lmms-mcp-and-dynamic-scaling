@@ -25,9 +25,23 @@
 #include "ConfigManager.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDir>
 #include <QDomElement>
+#include <QFile>
+#include <QFileInfo>
 #include <QMessageBox>
+#include <QUuid>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <signal.h>
+#include <unistd.h>
+#endif
 #include <QStandardPaths>
 #include <QTextStream>
 
@@ -83,6 +97,7 @@ ConfigManager::ConfigManager() :
 		QDir::addSearchPath("data", QString::fromLocal8Bit(std::getenv("LMMS_DATA_DIR")));
 	}
 	initDevelopmentWorkingDir();
+	publishRecoveryLock();
 
 #ifdef LMMS_BUILD_WIN32
 	QDir::addSearchPath("data", qApp->applicationDirPath() + "/data/");
@@ -229,7 +244,9 @@ bool ConfigManager::hasWorkingDir() const
 
 void ConfigManager::setWorkingDir(const QString & workingDir)
 {
+	if (!m_recoveryLockPath.isEmpty()) { QFile::remove(m_recoveryLockPath); }
 	m_workingDir = ensureTrailingSlash(QDir::cleanPath(workingDir));
+	publishRecoveryLock();
 }
 
 
@@ -696,6 +713,92 @@ void ConfigManager::saveConfigFile()
 
 	outfile.write(xml.toUtf8());
 	outfile.close();
+}
+
+QString ConfigManager::recoveryFile() const
+{
+	if (m_recoveryInstanceId.isEmpty()) { return m_workingDir + QStringLiteral("recover.mmp"); }
+	return m_workingDir + QStringLiteral("recover-") + m_recoveryInstanceId + QStringLiteral(".mmp");
+}
+
+QString ConfigManager::recoveryLockFile() const
+{
+	if (m_recoveryInstanceId.isEmpty()) { return m_workingDir + QStringLiteral("recover.lock"); }
+	return m_workingDir + QStringLiteral("recover-") + m_recoveryInstanceId + QStringLiteral(".lock");
+}
+
+void ConfigManager::publishRecoveryLock()
+{
+	if (m_workingDir.isEmpty()) { return; }
+	if (m_recoveryInstanceId.isEmpty())
+	{
+		m_recoveryInstanceId = QUuid::createUuid().toString(QUuid::Id128);
+	}
+	QDir().mkpath(m_workingDir);
+	QFile file(recoveryLockFile());
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) { return; }
+	file.write(QByteArray::number(QCoreApplication::applicationPid()));
+	file.write("\n");
+	file.write(m_recoveryInstanceId.toUtf8());
+	file.close();
+	m_recoveryLockPath = recoveryLockFile();
+}
+
+bool ConfigManager::recoveryOwnerAlive(const QString& lockPath)
+{
+	QFile file(lockPath);
+	if (!file.open(QIODevice::ReadOnly)) { return false; }
+	bool ok = false;
+	const qint64 pid = QString::fromUtf8(file.readLine().trimmed()).toLongLong(&ok);
+	if (!ok || pid <= 0) { return false; }
+	if (pid == QCoreApplication::applicationPid()) { return true; }
+#ifdef _WIN32
+	HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+	if (!handle) { return false; }
+	DWORD code = 0;
+	const BOOL queried = GetExitCodeProcess(handle, &code);
+	CloseHandle(handle);
+	return queried && code == STILL_ACTIVE;
+#else
+	return ::kill(static_cast<pid_t>(pid), 0) == 0;
+#endif
+}
+
+QStringList ConfigManager::orphanedRecoveryFiles() const
+{
+	QStringList found;
+	const QString legacy = m_workingDir + QStringLiteral("recover.mmp");
+	if (QFileInfo::exists(legacy)) { found.append(QFileInfo(legacy).absoluteFilePath()); }
+
+	QDir dir(m_workingDir);
+	const auto entries = dir.entryInfoList({QStringLiteral("recover-*.mmp")}, QDir::Files, QDir::Time);
+	const QString ours = QFileInfo(recoveryFile()).absoluteFilePath();
+	for (const auto& entry : entries)
+	{
+		if (entry.absoluteFilePath() == ours) { continue; }
+		QString lockPath = entry.absoluteFilePath();
+		lockPath.chop(static_cast<int>(QStringLiteral(".mmp").size()));
+		lockPath += QStringLiteral(".lock");
+		if (recoveryOwnerAlive(lockPath)) { continue; }
+		found.append(entry.absoluteFilePath());
+	}
+	return found;
+}
+
+bool ConfigManager::discardRecoveryFile(const QString& path)
+{
+	const QFileInfo info(path);
+	if (!info.exists() || !info.isFile()) { return false; }
+	const bool legacy = info.fileName() == QStringLiteral("recover.mmp");
+	const bool ours = info.absoluteFilePath() == QFileInfo(recoveryFile()).absoluteFilePath();
+	QString lockPath = info.absoluteFilePath();
+	lockPath.chop(static_cast<int>(QStringLiteral(".mmp").size()));
+	lockPath += QStringLiteral(".lock");
+	const bool ownerGone = !QFileInfo::exists(lockPath) || !recoveryOwnerAlive(lockPath);
+	if (!legacy && !ours && !ownerGone) { return false; }
+	const bool removed = QFile::remove(info.absoluteFilePath());
+	if (ours || ownerGone) { QFile::remove(lockPath); }
+	return removed;
 }
 
 void ConfigManager::initPortableWorkingDir()

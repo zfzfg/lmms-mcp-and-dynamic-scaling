@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QJsonObject>
+#include <QList>
 #include <QMutex>
 #include <QObject>
 #include <QQueue>
@@ -49,6 +50,8 @@ public:
 		std::function<bool()> connectionAlive = {});
 
 	void reset();
+	// Reject new commands and complete every queued callback and in-flight waiter once.
+	void beginShutdown();
 	// Operation registry lookup
 	bool lookupOperation(const QString& opKey, QJsonObject& outResult) const;
 
@@ -62,14 +65,31 @@ private:
 	AiCommandDispatcher();
 	~AiCommandDispatcher() override = default;
 
+	void takePendingCallbacksLocked(QList<std::function<void(const QJsonObject&)>>& callbacks);
+	void trimBulkyCompletedResponsesLocked();
+	QJsonObject retainedResponse(const QString& action, const QJsonObject& response) const;
+	void finishCommand(const QueuedCommand& cmd, const QJsonObject& response);
+	void completeAsyncRead(const QJsonObject& result);
+
 	mutable QMutex m_mutex;
 	QQueue<QueuedCommand> m_queue;
 	bool m_isProcessing{false};
+	bool m_shuttingDown{false};
+	bool m_asyncBusy{false};
+	QueuedCommand m_asyncCommand;
+	bool m_inFlightCallbackPending{false};
+	std::function<void(const QJsonObject&)> m_inFlightCallback;
 
-	// Key deduplication register (bounded up to 1024)
+	// Idempotency register. Completed keys stay replayable for 24 hours and are
+	// never removed early. Incomplete keys are never evicted. A completed
+	// non-mutation response larger than 64 KiB may be replaced with a compact
+	// stub that keeps the same ok/error identity and says the bulky payload was
+	// trimmed. Mutation responses are kept whole so replay stays identical.
+	// When every slot is still a young key, new keyed operations return Busy.
 	QHash<QString, OperationRecord> m_operations;
 	QList<QString> m_operationHistory;
 	static constexpr int MAX_OPERATION_HISTORY = 1024;
+	static constexpr int MAX_RETAINED_RESPONSE_BYTES = 64 * 1024;
 };
 
 } // namespace lmms::ai

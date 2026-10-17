@@ -145,7 +145,8 @@ public:
 	void mixToChannel(const AudioBuffer& buffer, mix_ch_t dest);
 
 	void prepareMasterMix();
-	void masterMix( SampleFrame* _buf );
+	// False when the worker batch is still live. The output buffer is then unchanged.
+	bool masterMix( SampleFrame* _buf );
 
 	void saveSettings( QDomDocument & _doc, QDomElement & _parent ) override;
 	void loadSettings( const QDomElement & _this ) override;

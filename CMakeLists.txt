@@ -976,6 +976,12 @@ MESSAGE(
 "-----------------------------------------------------------------\n"
 "\n\n")
 
+configure_file(
+	"${CMAKE_SOURCE_DIR}/cmake/build-manifest.json.in"
+	"${CMAKE_BINARY_DIR}/lmms-build-manifest.json"
+	@ONLY
+)
+
 SET(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${BIN_DIR}")
 if(MSVC)
 	# We can't set this on the install time according to the configuration

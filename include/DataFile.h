@@ -28,6 +28,7 @@
 
 #include <map>
 #include <QDomDocument>
+#include <QStringList>
 #include <vector>
 
 #include "lmms_export.h"
@@ -38,6 +39,16 @@ namespace lmms
 {
 
 class ProjectVersion;
+
+
+//! Result of publishing a project file or bundle at its final path.
+struct LMMS_EXPORT FilePublishResult
+{
+	bool ok = false;
+	QString path;
+	QString code;
+	QString message;
+};
 
 
 class LMMS_EXPORT DataFile : public QDomDocument
@@ -72,6 +83,12 @@ public:
 
 	void write( QTextStream& strm );
 	bool writeFile(const QString& fn, bool withResources = false, bool showErrors = true);
+	FilePublishResult publishFile(const QString& fn, bool withResources = false);
+	const FilePublishResult& lastPublishResult() const { return m_lastPublishResult; }
+	const QString& lastLoadError() const { return m_lastLoadError; }
+
+	//! Paths of leftover `.new` / `.bak` files next to @p finalPath, when they exist.
+	static QStringList existingSaveArtifacts(const QString& finalPath);
 
 	//! @brief Copies resources to @p resourcesDir and changes the
 	//! DataFile to use local paths to them
@@ -173,12 +190,16 @@ private:
 	void upgrade();
 
 	void loadData( const QByteArray & _data, const QString & _sourceFile );
+	bool acceptLoadedDocument(const QString& sourceFile);
+	FilePublishResult writeAtomic(const QString& finalPath, bool createBackup);
 
 	QString m_fileName; //!< The origin file name or "" if this DataFile didn't originate from a file
 	QDomElement m_content;
 	QDomElement m_head;
 	Type m_type;
 	unsigned int m_fileVersion;
+	FilePublishResult m_lastPublishResult;
+	QString m_lastLoadError;
 } ;
 
 

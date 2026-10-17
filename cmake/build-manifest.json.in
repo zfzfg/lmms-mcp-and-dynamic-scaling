@@ -1,0 +1,11 @@
+{
+  "project": "@PROJECT_NAME@",
+  "version": "@VERSION@",
+  "generator": "@CMAKE_GENERATOR@",
+  "cxx_compiler": "@CMAKE_CXX_COMPILER_ID@",
+  "cxx_compiler_version": "@CMAKE_CXX_COMPILER_VERSION@",
+  "qt6": "@WANT_QT6@",
+  "mcp": "@WANT_MCP@",
+  "testing": "@BUILD_TESTING@",
+  "build_type": "@CMAKE_BUILD_TYPE@"
+}

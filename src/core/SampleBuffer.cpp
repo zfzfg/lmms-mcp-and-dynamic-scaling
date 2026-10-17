@@ -24,8 +24,10 @@
 
 #include "SampleBuffer.h"
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QMessageBox>
+#include <QThread>
 #include <cstring>
 
 #include "GuiApplication.h"
@@ -83,7 +85,8 @@ std::shared_ptr<const SampleBuffer> SampleBuffer::fromFile(const QString& filePa
 	{
 		// TODO: Improve error handling. We dont always want to show a message box on failure when there is a GUI (e.g.
 		// when loading the project), and this function also shouldn't be concerned with handling the error.
-		if (gui::getGUI())
+		// A modal dialog is only safe on the GUI thread. Background preview reports the failure itself.
+		if (gui::getGUI() && QThread::currentThread() == QCoreApplication::instance()->thread())
 		{
 			QMessageBox::warning(nullptr, QObject::tr("Failed to load sample"),
 				QObject::tr("The sample may be corrupted or unsupported."));

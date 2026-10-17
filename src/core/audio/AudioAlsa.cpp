@@ -176,6 +176,7 @@ int AudioAlsa::handleError( int _err )
 	if( _err == -EPIPE )
 	{
 		// under-run
+		if (audioEngine() != nullptr) { audioEngine()->profiler().noteBackendXrun(); }
 		_err = snd_pcm_prepare( m_handle );
 		if( _err < 0 )
 			printf( "Can't recover from underrun, prepare "

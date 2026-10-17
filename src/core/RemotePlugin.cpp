@@ -24,6 +24,9 @@
 
 #include "RemotePlugin.h"
 
+#include <algorithm>
+#include <cassert>
+
 //#define DEBUG_REMOTE_PLUGIN
 #ifdef DEBUG_REMOTE_PLUGIN
 #include <QDebug>
@@ -188,25 +191,31 @@ RemotePlugin::RemotePlugin() :
 
 RemotePlugin::~RemotePlugin()
 {
+	transitionTo(State::Stopping);
 	m_watcher.stop();
 	m_watcher.wait();
 
-	if( m_failed == false )
+	if( isRunning() )
 	{
-		if( isRunning() )
+		if( !isInvalid() )
 		{
 			lock();
 			sendMessage( IdQuit );
-
-			m_process.waitForFinished( 1000 );
-			if( m_process.state() != QProcess::NotRunning )
-			{
-				m_process.terminate();
-				m_process.kill();
-			}
 			unlock();
 		}
+		// Existing QProcess handle. Escalate only after the shutdown budget.
+		if( !m_process.waitForFinished( kRemotePluginShutdownTimeoutMs )
+			&& m_process.state() != QProcess::NotRunning )
+		{
+			m_process.terminate();
+			m_process.kill();
+		}
 	}
+	if( !isInvalid() )
+	{
+		invalidate();
+	}
+	transitionTo(State::Stopped);
 
 #ifndef SYNC_WITH_SHM_FIFO
 	if ( close( m_server ) == -1)
@@ -224,12 +233,18 @@ bool RemotePlugin::init(const QString &pluginExecutable,
 							bool waitForInitDoneMsg , QStringList extraArgs)
 {
 	lock();
-	if( m_failed )
+	if( m_failed.load() )
 	{
 #ifdef SYNC_WITH_SHM_FIFO
 		reset( new shmFifo(), new shmFifo() );
 #endif
-		m_failed = false;
+		m_failed.store(false, std::memory_order_release);
+	}
+	if( !transitionTo(State::Starting) && state() != State::Starting )
+	{
+		m_failed.store(true, std::memory_order_release);
+		unlock();
+		return failed();
 	}
 	QString exec = QFileInfo(QDir("plugins:"), pluginExecutable).absoluteFilePath();
 
@@ -256,8 +271,9 @@ bool RemotePlugin::init(const QString &pluginExecutable,
 	{
 		qWarning( "Remote plugin '%s' not found",
 						exec.toUtf8().constData() );
-		m_failed = true;
+		m_failed.store(true, std::memory_order_release);
 		invalidate();
+		transitionTo(State::Failed);
 		unlock();
 		return failed();
 	}
@@ -293,14 +309,17 @@ bool RemotePlugin::init(const QString &pluginExecutable,
 	pollin.fd = m_server;
 	pollin.events = POLLIN;
 
+	// Already longer than the init-message budget; do not shorten it.
 	switch ( poll( &pollin, 1, 30000 ) )
 	{
 		case -1:
 			qWarning( "Unexpected poll error." );
+			m_failed.store(true, std::memory_order_release);
 			break;
 
 		case 0:
 			qWarning( "Remote plugin did not connect." );
+			m_failed.store(true, std::memory_order_release);
 			break;
 
 		default:
@@ -308,7 +327,15 @@ bool RemotePlugin::init(const QString &pluginExecutable,
 			if ( m_socket == -1 )
 			{
 				qWarning( "Unexpected socket error." );
+				m_failed.store(true, std::memory_order_release);
 			}
+	}
+	if( m_failed.load() )
+	{
+		invalidate();
+		transitionTo(State::Failed);
+		unlock();
+		return failed();
 	}
 #endif
 
@@ -319,6 +346,10 @@ bool RemotePlugin::init(const QString &pluginExecutable,
 	{
 		waitForInitDone();
 	}
+	if( m_failed.load() )
+	{
+		transitionTo(State::Failed);
+	}
 	unlock();
 
 	return failed();
@@ -327,17 +358,64 @@ bool RemotePlugin::init(const QString &pluginExecutable,
 
 
 
+namespace
+{
+
+int audioProcessingDeadlineMs(f_cnt_t frames, sample_rate_t rate)
+{
+	if (frames == 0 || rate == 0)
+	{
+		return kRemotePluginAudioTimeoutFallbackMs;
+	}
+	const auto twicePeriodMs = (static_cast<unsigned long long>(frames) * 2000ull)
+		/ static_cast<unsigned long long>(rate);
+	// Sub-millisecond periods still need one observable tick.
+	if (twicePeriodMs == 0)
+	{
+		return 1;
+	}
+	if (twicePeriodMs > static_cast<unsigned long long>(kRemotePluginAudioTimeoutMaxMs))
+	{
+		return kRemotePluginAudioTimeoutMaxMs;
+	}
+	return static_cast<int>(twicePeriodMs);
+}
+
+} // namespace
+
 bool RemotePlugin::process( const SampleFrame* _in_buf, SampleFrame* _out_buf )
 {
 	const f_cnt_t frames = Engine::audioEngine()->framesPerPeriod();
-
-	if( m_failed || !isRunning() )
+	const auto silence = [&]()
 	{
 		if( _out_buf != nullptr )
 		{
 			zeroSampleFrames(_out_buf, frames);
 		}
 		return false;
+	};
+
+	const State pluginState = state();
+	// Starting stays silent so a short audio deadline cannot fail a plugin
+	// that has not finished its init handshake. Failed does not wait again.
+	if( m_failed.load(std::memory_order_acquire)
+		|| pluginState == State::Failed
+		|| pluginState == State::Starting
+		|| pluginState == State::Stopping
+		|| pluginState == State::Stopped )
+	{
+		return silence();
+	}
+
+	if( !isRunning() )
+	{
+		if( !isInvalid() )
+		{
+			invalidate();
+		}
+		m_failed.store(true, std::memory_order_release);
+		transitionTo(State::Failed);
+		return silence();
 	}
 
 	if (!m_audioBuffer)
@@ -357,6 +435,14 @@ bool RemotePlugin::process( const SampleFrame* _in_buf, SampleFrame* _out_buf )
 			zeroSampleFrames(_out_buf, frames);
 		}
 		return false;
+	}
+
+	lock();
+	if( m_failed.load(std::memory_order_acquire) || state() != State::Ready
+		|| !m_audioBuffer )
+	{
+		unlock();
+		return silence();
 	}
 
 	memset( m_audioBuffer.get(), 0, m_audioBufferSize );
@@ -394,17 +480,34 @@ bool RemotePlugin::process( const SampleFrame* _in_buf, SampleFrame* _out_buf )
 		}
 	}
 
-	lock();
 	sendMessage( IdStartProcessing );
 
-	if( m_failed || _out_buf == nullptr || m_outputCount == 0 )
+	if( _out_buf == nullptr || m_outputCount == 0 )
 	{
 		unlock();
-		return false;
+		return silence();
 	}
 
-	waitForMessage( IdProcessingDone );
-	unlock();
+	if( !transitionTo(State::Processing) )
+	{
+		unlock();
+		return silence();
+	}
+
+	// busy_waiting stays false: never pump processEvents() on the audio thread.
+	const int budgetMs = audioProcessingDeadlineMs(frames,
+		Engine::audioEngine()->outputSampleRate());
+	const message done = waitForMessage(IdProcessingDone, false, budgetMs);
+	if( done.id != IdProcessingDone )
+	{
+		if( state() != State::Stopping && state() != State::Stopped )
+		{
+			failAudioWait(budgetMs);
+		}
+		unlock();
+		return silence();
+	}
+	transitionTo(State::Ready);
 
 	const ch_cnt_t outputs = std::min<ch_cnt_t>(m_outputCount,
 							DEFAULT_CHANNELS);
@@ -440,6 +543,7 @@ bool RemotePlugin::process( const SampleFrame* _in_buf, SampleFrame* _out_buf )
 		}
 	}
 
+	unlock();
 	return true;
 }
 
@@ -497,6 +601,98 @@ void RemotePlugin::resizeSharedProcessingMemory()
 
 
 
+bool RemotePlugin::isLegalTransition(State from, State to)
+{
+	switch (from)
+	{
+		case State::Stopped:
+			return to == State::Starting || to == State::Stopping;
+		case State::Starting:
+			return to == State::Ready || to == State::Failed || to == State::Stopping;
+		case State::Ready:
+			return to == State::Processing || to == State::Failed
+				|| to == State::Stopping || to == State::Starting;
+		case State::Processing:
+			return to == State::Ready || to == State::Failed || to == State::Stopping;
+		case State::Failed:
+			return to == State::Starting || to == State::Stopping;
+		case State::Stopping:
+			return to == State::Stopped;
+		default:
+			return false;
+	}
+}
+
+bool RemotePlugin::transitionTo(State next)
+{
+	State current = m_state.load(std::memory_order_acquire);
+	while (true)
+	{
+		if (current == next)
+		{
+			return false;
+		}
+		if (!isLegalTransition(current, next))
+		{
+#if !defined(NDEBUG)
+			// Shutdown and failure can win the race; those are not logic bugs.
+			const bool terminal = current == State::Failed
+				|| current == State::Stopping
+				|| current == State::Stopped;
+			if (!terminal)
+			{
+				assert(false && "illegal RemotePlugin state transition");
+			}
+#endif
+			return false;
+		}
+		if (m_state.compare_exchange_weak(current, next,
+				std::memory_order_acq_rel, std::memory_order_acquire))
+		{
+			return true;
+		}
+	}
+}
+
+void RemotePlugin::failInitWait()
+{
+	const bool exited = !isRunning();
+	m_failed.store(true, std::memory_order_release);
+	if (!isInvalid())
+	{
+		invalidate();
+	}
+	transitionTo(State::Failed);
+	if (exited)
+	{
+		qWarning() << "Remote plugin init failed because the process exited";
+	}
+	else
+	{
+		qWarning() << "Remote plugin init exceeded" << kRemotePluginInitTimeoutMs << "ms";
+	}
+}
+
+void RemotePlugin::failAudioWait(int deadlineMs)
+{
+	const bool exited = !isRunning() || isInvalid();
+	m_failed.store(true, std::memory_order_release);
+	if (!exited)
+	{
+		const int count = m_failureCount.fetch_add(1, std::memory_order_acq_rel) + 1;
+		fprintf(stderr,
+			"Remote plugin missed the audio deadline of %d ms while its process was still running; isolating it (failure %d)\n",
+			deadlineMs, count);
+		invalidate();
+	}
+	else if (!isInvalid())
+	{
+		invalidate();
+		fprintf(stderr, "Remote plugin process exited during audio processing\n");
+	}
+	transitionTo(State::Failed);
+}
+
 void RemotePlugin::processFinished( int exitCode,
 					QProcess::ExitStatus exitStatus )
 {
@@ -511,11 +707,26 @@ void RemotePlugin::processFinished( int exitCode,
 #ifndef SYNC_WITH_SHM_FIFO
 	invalidate();
 #endif
+	if( state() != State::Stopping && state() != State::Stopped )
+	{
+		m_failed.store(true, std::memory_order_release);
+		transitionTo(State::Failed);
+	}
 }
 
 void RemotePlugin::processErrored( QProcess::ProcessError err )
 {
 	qCritical() << "Process error: " << err;
+	if( state() == State::Stopping || state() == State::Stopped )
+	{
+		return;
+	}
+	m_failed.store(true, std::memory_order_release);
+	if( !isInvalid() )
+	{
+		invalidate();
+	}
+	transitionTo(State::Failed);
 }
 
 

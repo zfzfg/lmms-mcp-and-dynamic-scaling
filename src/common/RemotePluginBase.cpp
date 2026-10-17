@@ -24,6 +24,13 @@
 
 #include "RemotePluginBase.h"
 
+#include <algorithm>
+#include <chrono>
+
+#ifndef SYNC_WITH_SHM_FIFO
+#include <poll.h>
+#endif
+
 #ifndef BUILD_REMOTE_PLUGIN_CLIENT
 #include <QCoreApplication>
 #include <QThread>
@@ -73,6 +80,10 @@ RemotePluginBase::~RemotePluginBase()
 int RemotePluginBase::sendMessage(const message & _m)
 {
 #ifdef SYNC_WITH_SHM_FIFO
+	if (m_out->isInvalid())
+	{
+		return 0;
+	}
 	m_out->lock();
 	m_out->writeInt(_m.id);
 	m_out->writeInt(_m.data.size());
@@ -85,6 +96,10 @@ int RemotePluginBase::sendMessage(const message & _m)
 	m_out->unlock();
 	m_out->messageSent();
 #else
+	if (m_invalid)
+	{
+		return 0;
+	}
 	pthread_mutex_lock(&m_sendMutex);
 	writeInt(_m.id);
 	writeInt(_m.data.size());
@@ -103,10 +118,21 @@ int RemotePluginBase::sendMessage(const message & _m)
 
 
 
-RemotePluginBase::message RemotePluginBase::receiveMessage()
+RemotePluginBase::message RemotePluginBase::receiveMessage(int timeoutMs)
 {
 #ifdef SYNC_WITH_SHM_FIFO
-	m_in->waitForMessage();
+	if (m_in->isInvalid())
+	{
+		return message();
+	}
+	if (timeoutMs >= 0)
+	{
+		if (!m_in->waitForMessageTimed(timeoutMs)) { return message(); }
+	}
+	else
+	{
+		m_in->waitForMessage();
+	}
 	m_in->lock();
 	message m;
 	m.id = m_in->readInt();
@@ -117,6 +143,21 @@ RemotePluginBase::message RemotePluginBase::receiveMessage()
 	}
 	m_in->unlock();
 #else
+	if (m_invalid || m_socket < 0)
+	{
+		return message();
+	}
+	if (timeoutMs >= 0)
+	{
+		struct pollfd pollin = {};
+		pollin.fd = m_socket;
+		pollin.events = POLLIN;
+		const int polled = ::poll(&pollin, 1, timeoutMs);
+		if (polled <= 0 || m_invalid || (pollin.revents & POLLIN) == 0)
+		{
+			return message();
+		}
+	}
 	pthread_mutex_lock(&m_receiveMutex);
 	message m;
 	m.id = readInt();
@@ -135,14 +176,21 @@ RemotePluginBase::message RemotePluginBase::receiveMessage()
 
 RemotePluginBase::message RemotePluginBase::waitForMessage(
 							const message & _wm,
-							bool _busy_waiting)
+							bool _busy_waiting,
+							int timeoutMs)
 {
+	const auto started = std::chrono::steady_clock::now();
+	const auto elapsedMs = [&]() {
+		return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+	};
 #ifndef BUILD_REMOTE_PLUGIN_CLIENT
 	if (_busy_waiting)
 	{
-		// No point processing events outside of the main thread
-		_busy_waiting = QThread::currentThread() ==
-					QCoreApplication::instance()->thread();
+		// No point processing events outside of the main thread.
+		// Audio processing passes false and must not reach processEvents().
+		const auto * app = QCoreApplication::instance();
+		_busy_waiting = app != nullptr
+			&& QThread::currentThread() == app->thread();
 	}
 
 	struct WaitDepthCounter
@@ -164,19 +212,30 @@ RemotePluginBase::message RemotePluginBase::waitForMessage(
 	};
 
 	WaitDepthCounter wdc(waitDepthCounter(), _busy_waiting);
+	// Callers that omit a deadline still cannot spin on a silent plugin.
+	if (timeoutMs < 0)
+	{
+		timeoutMs = kRemotePluginMessageTimeoutMs;
+	}
 #endif
 	while (!isInvalid())
 	{
+		if (timeoutMs >= 0 && elapsedMs() >= timeoutMs) { return message(); }
 #ifndef BUILD_REMOTE_PLUGIN_CLIENT
 		if (_busy_waiting && !messagesLeft())
 		{
-			// FIXME: Can hang sometimes (due to too many messages?)
-			QCoreApplication::processEvents(
-				QEventLoop::ExcludeUserInputEvents, 50);
+			// Event processing is bounded by the caller deadline so a silent peer cannot spin forever.
+			const int slice = timeoutMs >= 0
+				? static_cast<int>(std::min<long long>(50, timeoutMs - elapsedMs()))
+				: 50;
+			if (slice <= 0) { return message(); }
+			QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, slice);
 			continue;
 		}
 #endif
-		message m = receiveMessage();
+		const int remaining = timeoutMs < 0 ? -1 : static_cast<int>(std::max<long long>(0, timeoutMs - elapsedMs()));
+		message m = receiveMessage(remaining);
+		if (timeoutMs >= 0 && m.id == IdUndefined) { return m; }
 		processMessage(m);
 		if (m.id == _wm.id)
 		{

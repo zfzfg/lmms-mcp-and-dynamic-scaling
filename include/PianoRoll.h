@@ -29,6 +29,7 @@
 
 #include <QWidget>
 
+#include <memory>
 #include <vector>
 
 #include "Editor.h"
@@ -554,6 +555,21 @@ private:
 	QBrush m_blackKeyActiveBackground;
 	QBrush m_blackKeyInactiveBackground;
 	QBrush m_blackKeyDisabledBackground;
+
+	// View-only time-range cache for note paint and hit tests. Not note data.
+	struct NoteTimeIndexCache;
+	std::unique_ptr<NoteTimeIndexCache> m_noteTimeIndex;
+	std::unique_ptr<NoteTimeIndexCache> m_ghostTimeIndex;
+
+	void invalidateNoteIndex();
+	void forgetNoteIndex();
+	void invalidateGhostIndex();
+	void forgetGhostIndex();
+	int noteCandidateMarginTicks() const;
+	void noteTickQueryAround(int tick, int& rangeStart, int& rangeEnd) const;
+	void visibleNoteTickQuery(int& rangeStart, int& rangeEnd) const;
+	bool collectNoteCandidates(int rangeStart, int rangeEnd, std::vector<Note*>& out);
+	bool collectGhostCandidates(int rangeStart, int rangeEnd, std::vector<Note*>& out);
 } ;
 
 

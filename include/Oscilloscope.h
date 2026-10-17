@@ -72,18 +72,18 @@ protected:
 	void paintEvent( QPaintEvent * _pe ) override;
 	void mousePressEvent( QMouseEvent * _me ) override;
 
-
-protected slots:
-	void updateAudioBuffer(const lmms::SampleFrame* buffer);
-
 private:
+	void reloadBackground();
+	void ensureFrames(f_cnt_t frames);
 	bool clips(float level) const;
 
 private:
 	QPixmap m_background;
 	QPointF * m_points;
 
-	SampleFrame* m_buffer;
+	SampleFrame* m_buffer = nullptr;
+	f_cnt_t m_frameCount = 0;
+	f_cnt_t m_drawnFrames = 0;
 	bool m_active;
 
 	QColor m_leftChannelColor;

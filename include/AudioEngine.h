@@ -38,6 +38,7 @@
 #include "LmmsTypes.h"
 #include "SampleFrame.h"
 #include "LocklessList.h"
+#include "AudioDisplayBuffer.h"
 #include "AudioEngineProfiler.h"
 #include "PlayHandle.h"
 
@@ -228,6 +229,9 @@ public:
 
 	bool criticalXRuns() const;
 
+	AudioDisplayBuffer& displayBuffer() { return m_displayBuffer; }
+	const AudioDisplayBuffer& displayBuffer() const { return m_displayBuffer; }
+
 	void pushInputFrames( SampleFrame* _ab, const f_cnt_t _frames );
 
 	inline const SampleFrame* inputBuffer()
@@ -358,9 +362,10 @@ private:
 	MidiClient * tryMidiClients();
 
 	void renderStageNoteSetup();
-	void renderStageInstruments();
-	void renderStageEffects();
-	void renderStageMix();
+	bool renderStageInstruments();
+	bool renderStageEffects();
+	bool renderStageMix();
+	std::span<const SampleFrame> finishBlockedPeriod(bool alreadySwapped);
 
 
 	void swapBuffers();
@@ -394,6 +399,8 @@ private:
 	// place where new playhandles are added temporarily
 	LocklessList<PlayHandle *> m_newPlayHandles;
 	ConstPlayHandleList m_playHandlesToRemove;
+	std::vector<PlayHandle*> m_deferredDeletes;
+	AudioDisplayBuffer m_displayBuffer;
 
 	float m_masterGain;
 

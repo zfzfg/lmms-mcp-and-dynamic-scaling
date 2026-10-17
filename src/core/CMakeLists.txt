@@ -19,6 +19,7 @@ set(LMMS_SRCS
 	core/Controller.cpp
 	core/ControllerConnection.cpp
 	core/DataFile.cpp
+	core/DiagnosticReport.cpp
 	core/DrumSynth.cpp
 	core/Effect.cpp
 	core/EffectChain.cpp

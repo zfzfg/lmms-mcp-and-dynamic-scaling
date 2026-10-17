@@ -252,6 +252,7 @@ private:
 
 private slots:
 	void browseHelp();
+	void exportDiagnostics();
 	void showTool( QAction * _idx );
 	void updateViewMenu();
 	void updateConfig( QAction * _who );

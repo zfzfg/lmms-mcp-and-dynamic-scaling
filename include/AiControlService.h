@@ -58,7 +58,11 @@ private:
 	std::atomic<uint32_t> m_permissions{
 		static_cast<uint32_t>(Permission::Read | Permission::WriteProject | Permission::Assets | Permission::Export)};
 	std::atomic<uint64_t> m_permissionGeneration{1};
-	QThread m_ioThread;
+	// App-thread flag. Set for the whole shutdown so a timed-out stop is not repeated
+	// as a fresh one, and cleared only by a later successful start.
+	bool m_shuttingDown{false};
+	// Heap-allocated so a timed-out thread can be leaked instead of destroyed alive.
+	std::unique_ptr<QThread> m_ioThread;
 
 	std::unique_ptr<AiLocalServer> m_server;
 };

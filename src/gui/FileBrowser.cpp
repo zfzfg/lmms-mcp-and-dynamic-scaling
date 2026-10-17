@@ -25,6 +25,12 @@
 
 #include "FileBrowser.h"
 
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <future>
+#include <memory>
+
 #include <PathUtil.h>
 #include <QApplication>
 #include <QCheckBox>
@@ -35,12 +41,13 @@
 #include <QMdiSubWindow>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPointer>
 #include <QProgressBar>
 #include <QScrollBar>
 #include <QPushButton>
 #include <QShortcut>
 #include <QStringList>
-#include <cassert>
+#include <QTimer>
 
 #include "AudioEngine.h"
 #include "ConfigManager.h"
@@ -96,7 +103,7 @@ FileBrowser::FileBrowser(Type type, const QString& directories, const QString& f
 	addContentCheckBox();
 
 	auto searchWidget = new QWidget(contentParent());
-	searchWidget->setFixedHeight( 24 );
+	searchWidget->setMinimumHeight(searchWidget->fontMetrics().height() + 8);
 
 	auto searchWidgetLayout = new QHBoxLayout(searchWidget);
 	searchWidgetLayout->setContentsMargins(0, 0, 0, 0);
@@ -104,13 +111,24 @@ FileBrowser::FileBrowser(Type type, const QString& directories, const QString& f
 
 	m_filterEdit = new QLineEdit(searchWidget);
 	m_filterEdit->setPlaceholderText(tr("Search"));
+	m_filterEdit->setAccessibleName(tr("Search"));
 	m_filterEdit->setClearButtonEnabled(true);
 	m_filterEdit->addAction(embed::getIcon("zoom"), QLineEdit::LeadingPosition);
 
-	connect(m_filterEdit, &QLineEdit::textEdited, this, &FileBrowser::onSearch);
+	m_searchDebounceTimer = new QTimer(this);
+	m_searchDebounceTimer->setSingleShot(true);
+	m_searchDebounceTimer->setInterval(200);
+	connect(m_searchDebounceTimer, &QTimer::timeout, this, &FileBrowser::performDebouncedSearch);
+	connect(m_filterEdit, &QLineEdit::textEdited, this, &FileBrowser::scheduleSearch);
+	// The clear button changes text without textEdited. Cancel immediately when it becomes empty.
+	connect(m_filterEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+		if (text.isEmpty()) { scheduleSearch(text); }
+	});
 	connect(&m_searchJob, &FileSearchJob::started, this, &FileBrowser::onSearchStarted, Qt::QueuedConnection);
 	connect(&m_searchJob, &FileSearchJob::finished, this, &FileBrowser::onSearchFinished, Qt::QueuedConnection);
-	connect(&m_searchJob, &FileSearchJob::foundMatch, this, &FileBrowser::onSearchMatch, Qt::QueuedConnection);
+	connect(&m_searchJob, &FileSearchJob::foundMatches, this, &FileBrowser::onSearchMatches, Qt::QueuedConnection);
+	connect(&m_searchJob, &FileSearchJob::cancelled, this, &FileBrowser::onSearchCancelled, Qt::QueuedConnection);
+	connect(&m_searchJob, &FileSearchJob::failed, this, &FileBrowser::onSearchFailed, Qt::QueuedConnection);
 
 	auto reload_btn = new QPushButton(embed::getIcon("reload"), QString(), searchWidget);
 	reload_btn->setToolTip( tr( "Refresh list" ) );
@@ -215,52 +233,141 @@ void FileBrowser::restoreDirectoriesStates()
 	expandItems(m_savedExpandedDirs);
 }
 
-void FileBrowser::onSearch(const QString& filter)
+void FileBrowser::scheduleSearch(const QString& filter)
 {
 	if (filter.isEmpty())
 	{
-		m_searchTreeWidget->hide();
-		m_fileBrowserTreeWidget->show();
+		m_searchDebounceTimer->stop();
+		cancelActiveSearch();
+		return;
+	}
+
+	m_searchDebounceTimer->start();
+}
+
+void FileBrowser::performDebouncedSearch()
+{
+	onSearch(m_filterEdit->text());
+}
+
+void FileBrowser::cancelActiveSearch()
+{
+	++m_searchGeneration;
+	m_searchJob.cancel();
+	m_searchTreeWidget->clear();
+	m_searchTreeWidget->hide();
+	m_fileBrowserTreeWidget->show();
+	updateSearchIndicator(SearchIndicatorState::Cancelled);
+}
+
+void FileBrowser::updateSearchIndicator(SearchIndicatorState state, const QString& detail)
+{
+	switch (state)
+	{
+	case SearchIndicatorState::Loading:
+		m_searchIndicator->setRange(0, 0);
+		m_searchIndicator->setFormat(tr("Searching..."));
+		m_searchIndicator->setToolTip({});
+		m_searchIndicator->setTextVisible(true);
+		break;
+	case SearchIndicatorState::Cancelled:
+		m_searchIndicator->setRange(0, 1);
+		m_searchIndicator->setValue(0);
+		m_searchIndicator->setFormat(tr("Cancelled"));
+		m_searchIndicator->setToolTip({});
+		m_searchIndicator->setTextVisible(true);
+		break;
+	case SearchIndicatorState::Error:
+		m_searchIndicator->setRange(0, 1);
+		m_searchIndicator->setValue(0);
+		m_searchIndicator->setFormat(tr("Error"));
+		m_searchIndicator->setToolTip(detail);
+		m_searchIndicator->setTextVisible(true);
+		break;
+	case SearchIndicatorState::Finished:
+		m_searchIndicator->setRange(0, 1);
+		m_searchIndicator->setFormat(QStringLiteral("%p%"));
+		m_searchIndicator->setToolTip({});
+		m_searchIndicator->setTextVisible(true);
+		break;
+	}
+}
+
+void FileBrowser::onSearch(const QString& filter)
+{
+	m_searchDebounceTimer->stop();
+
+	if (filter.isEmpty())
+	{
+		cancelActiveSearch();
 		return;
 	}
 
 	auto directories = m_directories.split('*');
 	if (m_showUserContent && !m_showUserContent->isChecked()) { directories.removeAll(m_userDir); }
 	if (m_showFactoryContent && !m_showFactoryContent->isChecked()) { directories.removeAll(m_factoryDir); }
-	if (directories.isEmpty()) { return; }
+	if (directories.isEmpty())
+	{
+		++m_searchGeneration;
+		m_searchJob.cancel();
+		m_searchTreeWidget->clear();
+		updateSearchIndicator(SearchIndicatorState::Cancelled);
+		return;
+	}
 
 	auto directoryFilters = QDir::AllEntries | QDir::NoDotAndDotDot;
-	if (m_showHiddenContent) { directoryFilters |= QDir::Hidden; }
+	if (m_showHiddenContent && m_showHiddenContent->isChecked()) { directoryFilters |= QDir::Hidden; }
 
+	const auto generation = ++m_searchGeneration;
 	const auto searchTask = FileSearchJob::Task{.filter = filter,
 		.paths = directories,
 		.extensions = FileItem::defaultFilters().split(" "),
 		.dirFilters = directoryFilters};
 
+	// Bump happened above, so queued batches from the previous generation cannot repopulate this clear.
 	m_searchTreeWidget->clear();
 	m_searchTreeWidget->show();
 	m_fileBrowserTreeWidget->hide();
-	m_searchJob.search(searchTask);
+	updateSearchIndicator(SearchIndicatorState::Loading);
+	m_searchJob.search(searchTask, generation);
 }
 
-void FileBrowser::onSearchMatch(const QString& path)
+void FileBrowser::onSearchMatches(quint64 generation, const QStringList& paths)
 {
-	const auto fileInfo = QFileInfo{path};
-	auto item = static_cast<QTreeWidgetItem*>(nullptr);
-	if (fileInfo.isDir()) { item = new Directory(fileInfo.fileName(), fileInfo.dir().path(), m_filter); }
-	else if (fileInfo.isFile()) { item = new FileItem(fileInfo.fileName(), fileInfo.dir().path()); }
+	if (generation != m_searchGeneration) { return; }
 
-	m_searchTreeWidget->addTopLevelItem(item);
+	for (const auto& path : paths)
+	{
+		const auto fileInfo = QFileInfo{path};
+		auto item = static_cast<QTreeWidgetItem*>(nullptr);
+		if (fileInfo.isDir()) { item = new Directory(fileInfo.fileName(), fileInfo.dir().path(), m_filter); }
+		else if (fileInfo.isFile()) { item = new FileItem(fileInfo.fileName(), fileInfo.dir().path()); }
+		if (item != nullptr) { m_searchTreeWidget->addTopLevelItem(item); }
+	}
 }
 
-void FileBrowser::onSearchStarted()
+void FileBrowser::onSearchStarted(quint64 generation)
 {
-	m_searchIndicator->setRange(0, 0);
+	if (generation != m_searchGeneration) { return; }
+	updateSearchIndicator(SearchIndicatorState::Loading);
 }
 
-void FileBrowser::onSearchFinished()
+void FileBrowser::onSearchFinished(quint64 generation)
 {
-	m_searchIndicator->setRange(0, 1);
+	if (generation != m_searchGeneration) { return; }
+	updateSearchIndicator(SearchIndicatorState::Finished);
+}
+
+void FileBrowser::onSearchCancelled(quint64 generation)
+{
+	if (generation != m_searchGeneration) { return; }
+	updateSearchIndicator(SearchIndicatorState::Cancelled);
+}
+
+void FileBrowser::onSearchFailed(quint64 generation, const QString& message)
+{
+	if (generation != m_searchGeneration) { return; }
+	updateSearchIndicator(SearchIndicatorState::Error, message);
 }
 
 void FileBrowser::reloadTree()
@@ -791,12 +898,13 @@ void FileBrowserTreeWidget::mousePressEvent(QMouseEvent * me )
 
 
 void FileBrowserTreeWidget::previewFileItem(FileItem* file)
-{	// TODO: We should do this work outside the event thread
+{
 	// Lock the preview mutex
 	QMutexLocker previewLocker(&m_pphMutex);
 	// If something is already playing, stop it before we continue
 	stopPreview();
 
+	const auto generation = ++m_previewGeneration;
 	PlayHandle* newPPH = nullptr;
 	const QString fileName = file->fullName();
 	const QString ext = file->extension();
@@ -805,21 +913,16 @@ void FileBrowserTreeWidget::previewFileItem(FileItem* file)
 	// handling() rather than directly creating a SamplePlayHandle
 	if (file->type() == FileItem::FileType::Sample)
 	{
-		TextFloat * tf = TextFloat::displayMessage(
-			tr("Loading sample"),
-			tr("Please wait, loading sample for preview..."),
-			embed::getIconPixmap("sample_file", 24, 24), 0);
-		// TODO: this can be removed once we do this outside the event thread
-		qApp->processEvents(QEventLoop::ExcludeUserInputEvents);
-		if (auto buffer = SampleBuffer::fromFile(fileName))
-		{
-			auto s = new SamplePlayHandle(new lmms::Sample{std::move(buffer)});
-			s->setDoneMayReturnTrue(false);
-			newPPH = s;
-		}
-		delete tf;
+		m_samplePreviewPending = true;
+		previewLocker.unlock();
+		enqueueSamplePreview(generation, fileName);
+		return;
 	}
-	else if (
+
+	m_samplePreviewPending = false;
+
+	// Plugins and presets stay on the GUI thread: their setup may create QObjects.
+	if (
 		(ext == "xiz" || ext == "sf2" || ext == "sf3" ||
 		 ext == "gig" || ext == "pat")
 		&& !getPluginFactory()->pluginSupportingExtension(ext).isNull())
@@ -854,12 +957,92 @@ void FileBrowserTreeWidget::previewFileItem(FileItem* file)
 	}
 }
 
+void FileBrowserTreeWidget::enqueueSamplePreview(quint64 generation, const QString& fileName)
+{
+	TextFloat::displayMessage(tr("Loading sample"), tr("Please wait, loading sample for preview..."),
+		embed::getIconPixmap("sample_file", 24, 24), 2000);
 
+	QPointer<FileBrowserTreeWidget> self{this};
+	auto accepted = std::make_shared<std::atomic<bool>>(false);
+	const auto failIfCurrent = [this, generation] {
+		QMutexLocker previewLocker(&m_pphMutex);
+		if (generation != m_previewGeneration) { return; }
+		m_samplePreviewPending = false;
+		previewLocker.unlock();
+		showSamplePreviewError();
+	};
 
+	try
+	{
+		auto future = ThreadPool::instance().enqueue([self, generation, fileName, accepted] {
+			accepted->store(true, std::memory_order_release);
+			auto buffer = std::shared_ptr<const SampleBuffer>{};
+			try
+			{
+				buffer = SampleBuffer::fromFile(fileName);
+			}
+			catch (...)
+			{
+				buffer.reset();
+			}
+
+			auto* app = qApp;
+			if (app == nullptr) { return; }
+			QMetaObject::invokeMethod(
+				app,
+				[self, generation, buffer] {
+					if (!self) { return; }
+					self->applySamplePreview(generation, buffer);
+				},
+				Qt::QueuedConnection);
+		});
+
+		const auto rejected = future.wait_for(std::chrono::seconds(0)) == std::future_status::ready
+			&& !accepted->load(std::memory_order_acquire);
+		if (rejected) { failIfCurrent(); }
+	}
+	catch (...)
+	{
+		failIfCurrent();
+	}
+}
+
+void FileBrowserTreeWidget::applySamplePreview(quint64 generation, const std::shared_ptr<const SampleBuffer>& buffer)
+{
+	QMutexLocker previewLocker(&m_pphMutex);
+	if (generation != m_previewGeneration) { return; }
+
+	m_samplePreviewPending = false;
+	if (!buffer || buffer->empty())
+	{
+		previewLocker.unlock();
+		showSamplePreviewError();
+		return;
+	}
+
+	if (m_previewPlayHandle != nullptr)
+	{
+		Engine::audioEngine()->removePlayHandle(m_previewPlayHandle);
+		m_previewPlayHandle = nullptr;
+	}
+
+	auto* handle = new SamplePlayHandle(new lmms::Sample{buffer});
+	handle->setDoneMayReturnTrue(false);
+	if (Engine::audioEngine()->addPlayHandle(handle)) { m_previewPlayHandle = handle; }
+}
+
+void FileBrowserTreeWidget::showSamplePreviewError()
+{
+	TextFloat::displayMessage(tr("Couldn't load sample"), tr("The sample could not be previewed."),
+		embed::getIconPixmap("sample_file", 24, 24), 2000);
+}
 
 void FileBrowserTreeWidget::stopPreview()
 {
 	QMutexLocker previewLocker(&m_pphMutex);
+	// Drop a decode that has not reached playback yet.
+	++m_previewGeneration;
+	m_samplePreviewPending = false;
 	if (m_previewPlayHandle != nullptr)
 	{
 		Engine::audioEngine()->removePlayHandle(m_previewPlayHandle);
@@ -928,14 +1111,15 @@ void FileBrowserTreeWidget::mouseReleaseEvent(QMouseEvent * me )
 {
 	m_mousePressed = false;
 
-	// If a preview is running, we may need to stop it. Otherwise, we're done
+	// If a preview is running or a sample is still decoding, we may need to stop it.
 	QMutexLocker previewLocker(&m_pphMutex);
-	if (m_previewPlayHandle == nullptr) { return; }
+	if (m_previewPlayHandle == nullptr && !m_samplePreviewPending) { return; }
 
 	// Only sample previews may continue after mouse up. Is this a sample preview?
-	bool isSample = m_previewPlayHandle->type() == PlayHandle::Type::SamplePlayHandle;
+	const bool isSample = m_samplePreviewPending
+		|| (m_previewPlayHandle != nullptr && m_previewPlayHandle->type() == PlayHandle::Type::SamplePlayHandle);
 	// Even sample previews should only continue if the user wants them to. Do they?
-	bool shouldContinue = ConfigManager::inst()->value("ui", "letpreviewsfinish").toInt();
+	const bool shouldContinue = ConfigManager::inst()->value("ui", "letpreviewsfinish").toInt();
 	// If both are true the preview may continue, otherwise we stop it
 	if (!(isSample && shouldContinue)) { stopPreview(); }
 }

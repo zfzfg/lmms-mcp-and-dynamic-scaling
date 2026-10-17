@@ -25,14 +25,22 @@
 #ifndef LMMS_GUI_FILE_SEARCH_JOB_H
 #define LMMS_GUI_FILE_SEARCH_JOB_H
 
+#include <atomic>
+#include <future>
+#include <memory>
+#include <mutex>
+#include <vector>
+
 #include <QDir>
 #include <QObject>
 #include <QString>
-#include <future>
+#include <QStringList>
 
 namespace lmms::gui {
 //! The `FileSearchJob` class allows for searching for files on the filesystem.
-//! Searching occurs on a background thread, and results are emitted as a Qt slot back to the user.
+//! Searching occurs on a background thread. Results are batched and tagged with the caller's generation.
+//! `search()`, `cancel()`, and the destructor do not wait for filesystem I/O.
+//! A search that outlives this object drops its results.
 class FileSearchJob : public QObject
 {
 	Q_OBJECT
@@ -57,25 +65,42 @@ public:
 	FileSearchJob& operator=(const FileSearchJob&) = delete;
 	FileSearchJob& operator=(FileSearchJob&&) = delete;
 
-	//! Commit to searching with the given @p task.
-	//! Cancels any previous search.
-	//! Callers can connect to the provided signals to interact with the search and its progress.
-	void search(Task task);
+	//! Start @p task and echo @p generation on every signal.
+	//! Asks any previous search to stop, then returns without waiting.
+	//! A slow directory read cannot be interrupted; it exits after the current entry.
+	void search(Task task, quint64 generation);
+
+	//! Ask the active search to stop. Does not block and does not start a new search.
+	void cancel();
 
 signals:
-	//! Emitted when the search job has found a matching path.
-	void foundMatch(const QString& path);
+	//! Emitted with up to 64 matching paths from @p generation.
+	void foundMatches(quint64 generation, const QStringList& paths);
 
-	//! Emitted when the search job has started searching.
-	void started();
+	//! Emitted when @p generation has started searching.
+	void started(quint64 generation);
 
-	//! Emitted when the search job has finished searching.
-	void finished();
+	//! Emitted when @p generation finished without being stopped.
+	void finished(quint64 generation);
+
+	//! Emitted when @p generation stopped before a normal finish.
+	void cancelled(quint64 generation);
+
+	//! Emitted when @p generation failed. @p message is not translated.
+	void failed(quint64 generation, const QString& message);
 
 private:
-	void runSearch(Task task);
-	std::future<void> m_task;
-	std::atomic_flag m_stop = ATOMIC_FLAG_INIT;
+	struct Request
+	{
+		quint64 generation = 0;
+		std::atomic<bool> stop{false};
+	};
+
+	void reapReady();
+
+	std::shared_ptr<Request> m_current;
+	std::mutex m_pendingMutex;
+	std::vector<std::future<void>> m_pending;
 };
 } // namespace lmms::gui
 

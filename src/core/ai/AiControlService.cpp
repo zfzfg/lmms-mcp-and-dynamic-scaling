@@ -84,12 +84,25 @@ AiControlService::AiControlService()
 AiControlService::~AiControlService()
 {
 	stopService();
+	// A thread that missed the shutdown deadline is still inside Qt. Destroying
+	// it, or the server that lives on it, is undefined. Leak both instead.
+	if (m_ioThread && m_ioThread->isRunning())
+	{
+		m_server.release();
+		m_ioThread.release();
+	}
 }
 
 bool AiControlService::startService(const QString& customConnectionFilePath)
 {
 	if (m_running) { return true; }
+	if (m_ioThread && m_ioThread->isRunning())
+	{
+		m_lastError = "MCP shutdown timed out";
+		return false;
+	}
 
+	m_shuttingDown = false;
 	m_instanceId = QString("inst_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
 	m_authToken
 		= QUuid::createUuid().toString(QUuid::WithoutBraces) + QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -111,10 +124,11 @@ bool AiControlService::startService(const QString& customConnectionFilePath)
 	AiParameterRegistry::instance()->registerBuiltins(Engine::getSong());
 	AiProjectRevision::instance()->attachToSong(Engine::getSong());
 	m_lastError.clear();
+	m_ioThread = std::make_unique<QThread>();
 	m_server = std::make_unique<AiLocalServer>();
-	m_server->moveToThread(&m_ioThread);
+	m_server->moveToThread(m_ioThread.get());
 	m_running = true;
-	connect(&m_ioThread, &QThread::started, m_server.get(), [this] {
+	connect(m_ioThread.get(), &QThread::started, m_server.get(), [this] {
 		const bool listening = m_server->startListening(m_endpointName);
 		const QString address = m_server->serverName();
 		QMetaObject::invokeMethod(
@@ -138,32 +152,62 @@ bool AiControlService::startService(const QString& customConnectionFilePath)
 			},
 			Qt::QueuedConnection);
 	});
-	m_ioThread.start();
+	m_ioThread->start();
 
 	return true;
 }
 
 void AiControlService::stopService()
 {
-	if (!m_running) { return; }
+	const bool threadRunning = m_ioThread && m_ioThread->isRunning();
+	if (!m_running && !m_shuttingDown && !m_server && !threadRunning) { return; }
 
+	const bool firstStop = !m_shuttingDown;
 	m_ready = false;
 	m_listening = false;
 	m_running = false;
+	m_shuttingDown = true;
 
-	if (m_server)
+	// Unblock dispatcher waiters before joining the I/O thread. Each callback
+	// runs once; new dispatch calls are rejected until the next startService.
+	if (firstStop) { AiCommandDispatcher::instance()->beginShutdown(); }
+
+	if (m_server && m_ioThread && m_ioThread->isRunning())
 	{
+		AiLocalServer* server = m_server.get();
+		QThread* thread = m_ioThread.get();
 		QMetaObject::invokeMethod(
-			m_server.get(),
-			[this] {
-				m_server->stopListening();
-				m_ioThread.quit();
+			server,
+			[server, thread] {
+				server->stopListening();
+				thread->quit();
 			},
 			Qt::QueuedConnection);
-		m_ioThread.wait();
+		if (!thread->wait(3000))
+		{
+			m_lastError = "MCP shutdown timed out";
+			// The server still lives on the running thread. Do not reset() it here.
+		}
+		else
+		{
+			// The thread has exited, so destroying its server from here is safe.
+			m_server.reset();
+			m_ioThread.reset();
+		}
+	}
+	else if (m_ioThread && m_ioThread->isRunning())
+	{
+		m_ioThread->quit();
+		if (!m_ioThread->wait(3000)) { m_lastError = "MCP shutdown timed out"; }
+		else { m_ioThread.reset(); }
+	}
+	else
+	{
 		m_server.reset();
+		m_ioThread.reset();
 	}
 
+	if (!firstStop) { return; }
 	AiJobManager::instance()->shutdown();
 	AiProjectRevision::instance()->detach();
 	AiParameterRegistry::instance()->clear();

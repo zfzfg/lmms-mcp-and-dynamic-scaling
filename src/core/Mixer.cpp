@@ -107,7 +107,11 @@ void MixerChannel::incrementDeps()
 	if( i >= m_receives.size() && ! m_queued )
 	{
 		m_queued = true;
-		AudioEngineWorkerThread::addJob( this );
+		if (!AudioEngineWorkerThread::addJob(this) && requiresProcessing())
+		{
+			queue();
+			process();
+		}
 	}
 }
 
@@ -678,7 +682,7 @@ void Mixer::prepareMasterMix()
 
 
 
-void Mixer::masterMix( SampleFrame* _buf )
+bool Mixer::masterMix( SampleFrame* _buf )
 {
 	const int fpp = Engine::audioEngine()->framesPerPeriod();
 
@@ -689,7 +693,10 @@ void Mixer::masterMix( SampleFrame* _buf )
 	// also instantly add all muted channels as they don't need to care
 	// about their senders, and can just increment the deps of their
 	// recipients right away.
-	AudioEngineWorkerThread::resetJobQueue( AudioEngineWorkerThread::JobQueue::OperationMode::Dynamic );
+	if (!AudioEngineWorkerThread::tryResetJobQueue(AudioEngineWorkerThread::JobQueue::OperationMode::Dynamic))
+	{
+		return false;
+	}
 	for( MixerChannel * ch : m_mixerChannels )
 	{
 		ch->m_muted = ch->m_muteModel.value();
@@ -701,9 +708,14 @@ void Mixer::masterMix( SampleFrame* _buf )
 		else if( ch->m_receives.size() == 0 )
 		{
 			ch->m_queued = true;
-			AudioEngineWorkerThread::addJob( ch );
+			if (!AudioEngineWorkerThread::addJob(ch) && ch->requiresProcessing())
+			{
+				ch->queue();
+				ch->process();
+			}
 		}
 	}
+	int waits = 0;
 	while (m_mixerChannels[0]->state() != ThreadableJob::ProcessingState::Done)
 	{
 		bool found = false;
@@ -721,7 +733,13 @@ void Mixer::masterMix( SampleFrame* _buf )
 		{
 			break;
 		}
-		AudioEngineWorkerThread::startAndWaitForJobs();
+		// One timed-out wait leaves the batch live. Calling again would
+		// reuse jobs that are still inside process(). A handful of successful
+		// waits covers dynamic jobs; more than that means the graph is stuck.
+		if (!AudioEngineWorkerThread::startAndWaitForJobs() || ++waits > 8)
+		{
+			return false;
+		}
 	}
 
 	auto buffer = m_mixerChannels[0]->m_buffer.interleavedBuffer().asSampleFrames();
@@ -752,6 +770,7 @@ void Mixer::masterMix( SampleFrame* _buf )
 		m_mixerChannels[i]->m_queued = false;
 		m_mixerChannels[i]->m_dependenciesMet = 0;
 	}
+	return true;
 }
 
 

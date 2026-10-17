@@ -25,18 +25,40 @@
 #ifndef LMMS_AUDIO_ENGINE_WORKER_THREAD_H
 #define LMMS_AUDIO_ENGINE_WORKER_THREAD_H
 
-#include <QThread>
-
+#include <chrono>
+#include <condition_variable>
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
 #include <atomic>
 
-class QWaitCondition;
+#include <QList>
+#include <QThread>
+
+#include "ThreadableJob.h"
 
 namespace lmms
 {
 
 class AudioEngine;
-class ThreadableJob;
 
+// Synchronization contract:
+// - One mutex and condition_variable cover worker wakeups and batch completion.
+// - Workers sleep while !stop && generation is unchanged. quit() sets the stop
+//   flag and notifies; it does not join threads or recycle the queue.
+//   AudioEngine joins workers after quit() and does not free their jobs unless
+//   the join succeeds.
+// - A batch stays live while a worker is inside run()/process() or the queue
+//   is not drained. tryResetJobQueue() fails for a live batch. Callers must
+//   not delete those jobs or start another batch over them.
+// - startAndWaitForJobs() refuses when a wait is already open or a worker is
+//   still inside run(). Otherwise it bumps the generation, optionally runs
+//   the inline share, then waits only up to the given budget.
+// - addJob() claims an index, then release-stores the job pointer only after
+//   queue(). Consumers acquire that pointer by exchanging the slot to nullptr.
+//   A published non-null pointer is processed exactly once.
+// - Indexes past JOB_QUEUE_SIZE are not queued. The claim is still counted
+//   finished so wait cannot hang, and the job is left unqueued.
 class AudioEngineWorkerThread : public QThread
 {
 	Q_OBJECT
@@ -53,70 +75,133 @@ public:
 
 		static constexpr size_t JOB_QUEUE_SIZE = 8192;
 
-		JobQueue() :
-			m_items(),
-			m_writeIndex( 0 ),
-			m_itemsDone( 0 ),
-			m_opMode( OperationMode::Static )
-		{
-			std::fill(m_items, m_items + JOB_QUEUE_SIZE, nullptr);
-		}
+		JobQueue();
 
-		void reset( OperationMode _opMode );
+		void reset( OperationMode opMode );
 
-		void addJob( ThreadableJob * _job );
+		// true: job was published and will be processed by a worker.
+		// false: job was not queued. The caller must process it inline when
+		// it still requires processing. Overflow does not leave the job Queued.
+		bool addJob( ThreadableJob * job );
+
+		bool readyToReset() const noexcept { return drained(); }
 
 		void run();
 		void wait();
+		bool waitFor( std::chrono::milliseconds timeout );
+
+		std::uint64_t overflowCount() const
+		{
+			return m_overflowCount.load( std::memory_order_relaxed );
+		}
 
 	private:
-		std::atomic<ThreadableJob*> m_items[JOB_QUEUE_SIZE];
-		std::atomic_size_t m_writeIndex;
-		std::atomic_size_t m_itemsDone;
-		OperationMode m_opMode;
+		void advancePublished() noexcept;
+		void finishOne() noexcept;
+		bool drained() const noexcept;
+		std::size_t publishedLimit() const noexcept;
+		bool batchSettled() const;
+
+		std::atomic<ThreadableJob *> m_items[JOB_QUEUE_SIZE];
+		// 1 once the pointer at that index has been release-stored.
+		// Consumers only scan the consecutive published prefix, so they
+		// never observe a hole and never need to exchange a not-yet-stored slot.
+		std::atomic<std::uint8_t> m_ready[JOB_QUEUE_SIZE];
+		std::atomic<std::size_t> m_writeIndex;
+		std::atomic<std::size_t> m_published;
+		std::atomic<std::size_t> m_itemsDone;
+		std::atomic<std::uint64_t> m_overflowCount;
+		// Bumped by reset so a scan still inside run() after a timed-out
+		// wait stops claiming slots and stops touching the new counters.
+		std::atomic<std::uint64_t> m_epoch;
+		std::atomic<OperationMode> m_opMode;
 	} ;
 
 
-	AudioEngineWorkerThread( AudioEngine* audioEngine );
+	AudioEngineWorkerThread( AudioEngine * audioEngine );
 	~AudioEngineWorkerThread() override;
 
 	virtual void quit();
 
-	static void resetJobQueue( JobQueue::OperationMode _opMode =
-													JobQueue::OperationMode::Static )
+	// False while workers are inside run() or the queue still holds unfinished jobs.
+	// A false result means the caller must keep the current jobs alive.
+	static bool tryResetJobQueue( JobQueue::OperationMode opMode =
+													JobQueue::OperationMode::Static );
+
+	static bool addJob( ThreadableJob * job )
 	{
-		globalJobQueue.reset( _opMode );
+		return globalJobQueue.addJob( job );
 	}
 
-	static void addJob( ThreadableJob * _job )
-	{
-		globalJobQueue.addJob( _job );
-	}
-
-	// a convenient helper function allowing to pass a container with pointers
-	// to ThreadableJob objects
+	// Resets only when the previous batch is idle, then publishes @p items.
+	// False means the previous batch is still live and nothing was queued.
 	template<typename T>
-	static void fillJobQueue( const T & _vec,
-							JobQueue::OperationMode _opMode = JobQueue::OperationMode::Static )
+	static bool fillJobQueue( const T & items,
+							JobQueue::OperationMode opMode = JobQueue::OperationMode::Static )
 	{
-		resetJobQueue( _opMode );
-		for (const auto& job : _vec)
+		if( !tryResetJobQueue( opMode ) )
 		{
-			addJob(job);
+			return false;
 		}
+		for( const auto & job : items )
+		{
+			// addJob() reserves an index before queue(), and only then
+			// release-stores the pointer. false means it was not published:
+			// either requiresProcessing() was false, or the queue was full.
+			// A full-queue reservation is already counted finished. Run that
+			// job inline once on this thread. Do not queue() a job that was
+			// accepted, or it would be processed twice.
+			if( !addJob( job ) && job->requiresProcessing() )
+			{
+				job->queue();
+				job->process();
+			}
+		}
+		return true;
 	}
 
-	static void startAndWaitForJobs();
+	// A non-positive budget uses two audio periods, clamped to 2..50 ms.
+	// @p runInline processes part of the queue on the caller. Tests pass false
+	// so a worker is the one inside process() while the caller only waits.
+	// False: the budget expired, or a batch is already in progress. The queue
+	// was not reset. Do not call again until batchInFlight() is false.
+	static bool startAndWaitForJobs( std::chrono::milliseconds budget = std::chrono::milliseconds::zero(),
+									bool runInline = true );
+
+	// True while a worker is inside run() or a timed-out batch is not drained.
+	// Also true after jobs have been queued and before they finish.
+	static bool batchInFlight();
+
+	static int aliveWorkers();
+
+	// True after a timed-out wait until a later wait succeeds.
+	static bool lastWaitTimedOut();
+
+	static std::uint64_t waitTimeouts();
+	static std::uint64_t busyRefusals();
+
+	// Cumulative number of addJob() calls that did not fit in the queue.
+	static std::uint64_t overflowCount();
 
 
 private:
 	void run() override;
 
 	static JobQueue globalJobQueue;
-	static QWaitCondition * queueReadyWaitCond;
+	static std::mutex s_mutex;
+	static std::condition_variable s_cv;
+	static std::uint64_t s_generation;
+	static std::size_t s_alive;
+	static std::size_t s_expected;
+	static std::size_t s_finished;
+	static std::size_t s_workersInRun;
+	static bool s_waitInProgress;
+	static std::atomic<bool> s_lastWaitTimedOut;
+	static std::atomic<std::uint64_t> s_waitTimeouts;
+	static std::atomic<std::uint64_t> s_busyRefusals;
 	static QList<AudioEngineWorkerThread *> workerThreads;
 
-	volatile bool m_quit;
+	std::atomic<bool> m_stop;
 } ;
 
 } // namespace lmms

@@ -27,7 +27,11 @@
 
 #include <array>
 #include <atomic>
-#include <QFile>
+#include <cstdint>
+#include <memory>
+#include <QString>
+
+#include <algorithm>
 
 #include "LmmsTypes.h"
 #include "MicroTimer.h"
@@ -39,7 +43,14 @@ class AudioEngineProfiler
 {
 public:
 	AudioEngineProfiler();
-	~AudioEngineProfiler() = default;
+	~AudioEngineProfiler();
+
+	AudioEngineProfiler(const AudioEngineProfiler&) = delete;
+	AudioEngineProfiler& operator=(const AudioEngineProfiler&) = delete;
+
+	void beginLockWait() { m_lockTimer.reset(); }
+
+	void endLockWait() { m_lockWaitUs = static_cast<unsigned int>(std::max(0, m_lockTimer.elapsed())); }
 
 	void startPeriod()
 	{
@@ -48,10 +59,22 @@ public:
 
 	void finishPeriod( sample_rate_t sampleRate, f_cnt_t framesPerPeriod );
 
+	//! Records one period without reading the timers. Used by tests and by finishPeriod.
+	void recordSample(unsigned int processUs, unsigned int lockWaitUs, unsigned int limitUs);
+
 	int cpuLoad() const
 	{
-		return m_cpuLoad;
+		return static_cast<int>(m_cpuLoad.load(std::memory_order_relaxed));
 	}
+
+	auto deadlineMisses() const -> uint64_t { return m_deadlineMisses.load(std::memory_order_relaxed); }
+	auto backendXruns() const -> uint64_t { return m_backendXruns.load(std::memory_order_relaxed); }
+	auto lastProcessUs() const -> unsigned int { return m_lastProcessUs.load(std::memory_order_relaxed); }
+	auto lastLockWaitUs() const -> unsigned int { return m_lastLockWaitUs.load(std::memory_order_relaxed); }
+	void noteBackendXrun();
+	void noteWorkerStall();
+	auto workerStalls() const -> uint64_t { return m_workerStalls.load(std::memory_order_relaxed); }
+	void histogram(std::array<uint64_t, 5>& buckets) const;
 
 	void setOutputFile( const QString& outputFile );
 
@@ -96,9 +119,20 @@ private:
 		m_detailTime[static_cast<std::size_t>(type)] = m_detailTimer[static_cast<std::size_t>(type)].elapsed();
 	}
 
+	void accountSample(unsigned int processUs, unsigned int lockWaitUs, unsigned int limitUs);
+
+	struct PeriodExport;
 	MicroTimer m_periodTimer;
+	MicroTimer m_lockTimer;
+	unsigned int m_lockWaitUs = 0;
 	std::atomic<float> m_cpuLoad;
-	QFile m_outputFile;
+	std::atomic<uint64_t> m_deadlineMisses{0};
+	std::atomic<uint64_t> m_backendXruns{0};
+	std::atomic<uint64_t> m_workerStalls{0};
+	std::atomic<unsigned int> m_lastProcessUs{0};
+	std::atomic<unsigned int> m_lastLockWaitUs{0};
+	std::array<std::atomic<uint64_t>, 5> m_histogram{};
+	std::unique_ptr<PeriodExport> m_export;
 
 	// Use arrays to avoid dynamic allocations in realtime code
 	std::array<MicroTimer, DetailCount> m_detailTimer;

@@ -25,6 +25,7 @@
  */
 
 #include "PianoRoll.h"
+#include "NoteTimeIndex.h"
 
 #include <QtMath>  // IWYU pragma: keep
 #include <QApplication>
@@ -45,6 +46,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <utility>
 
 #include "AutomationEditor.h"
@@ -157,6 +160,123 @@ const std::vector<float> PianoRoll::m_zoomYLevels =
 		{0.25f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f};
 
 
+namespace
+{
+
+// Ticks actually drawn for a note. Negative lengths are shown as 4 ticks.
+// Detuning may extend the curve past the note body; zero-length notes stay 0
+// unless a curve is present (paint still skips a zero length).
+int drawnNoteTicks(const Note* note)
+{
+	int detuneTicks = 0;
+	const auto& detuning = note->detuning();
+	if (detuning && detuning->hasAutomation())
+	{
+		const auto& timeMap = detuning->automationClip()->getTimeMap();
+		if (!timeMap.isEmpty()) { detuneTicks = timeMap.lastKey(); }
+	}
+	return NoteTimeIndex::drawnTicks(static_cast<int>(note->length()), detuneTicks);
+}
+
+
+unsigned long long noteGeometrySignature(const NoteVector& notes)
+{
+	// FNV-1a over order, identity, position, length, and detune extent.
+	// Volume and panning are intentionally ignored.
+	unsigned long long sig = 1469598103934665603ull;
+	auto mix = [&sig](unsigned long long value)
+	{
+		sig ^= value;
+		sig *= 1099511628211ull;
+	};
+	mix(static_cast<unsigned long long>(notes.size()));
+	for (const Note* note : notes)
+	{
+		mix(static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(note)));
+		mix(static_cast<unsigned int>(note->pos().getTicks()));
+		mix(static_cast<unsigned int>(note->length().getTicks()));
+		mix(static_cast<unsigned int>(drawnNoteTicks(note)));
+	}
+	return sig;
+}
+
+} // namespace
+
+
+struct PianoRoll::NoteTimeIndexCache
+{
+	NoteTimeIndex index;
+	bool dirty = true;
+	bool built = false;
+	unsigned long long signature = 0;
+
+	void invalidate()
+	{
+		dirty = true;
+	}
+
+	void forget()
+	{
+		dirty = true;
+		built = false;
+		signature = 0;
+		index.clear();
+	}
+
+	void rebuild(const NoteVector& notes)
+	{
+		std::vector<NoteTimeIndex::Span> spans;
+		spans.reserve(notes.size());
+		const int extra = TimePos::ticksPerBar();
+		for (int i = 0; i < static_cast<int>(notes.size()); ++i)
+		{
+			const Note* note = notes[i];
+			const int start = note->pos().getTicks();
+			const int drawn = drawnNoteTicks(note);
+			// One extra bar so a curve that runs slightly past the last detune
+			// node, and pixel rounding at the viewport edge, still overlap.
+			const long long end64 = static_cast<long long>(start) + drawn + extra;
+			const int end = static_cast<int>(std::min(
+				end64, static_cast<long long>(std::numeric_limits<int>::max())));
+			spans.push_back(NoteTimeIndex::Span{start, end, i});
+		}
+		index.rebuild(spans);
+	}
+
+	bool collect(const NoteVector& notes, int rangeStart, int rangeEnd, std::vector<Note*>& out)
+	{
+		out.clear();
+		if (static_cast<int>(notes.size()) < NoteTimeIndex::kMinNotes)
+		{
+			return false;
+		}
+
+		const bool cacheCoversNotes = built && index.size() == static_cast<int>(notes.size());
+		if (dirty || !cacheCoversNotes)
+		{
+			const unsigned long long sig = noteGeometrySignature(notes);
+			if (!cacheCoversNotes || sig != signature)
+			{
+				rebuild(notes);
+				signature = sig;
+				built = true;
+			}
+			dirty = false;
+		}
+
+		std::vector<int> indices;
+		index.query(rangeStart, rangeEnd, indices);
+		std::sort(indices.begin(), indices.end());
+		out.reserve(indices.size());
+		for (int noteIndex : indices)
+		{
+			out.push_back(notes[static_cast<std::size_t>(noteIndex)]);
+		}
+		return true;
+	}
+};
+
+
 PianoRoll::PianoRoll() :
 	m_noteEditMenu( nullptr ),
 	m_semiToneMarkerMenu( nullptr ),
@@ -224,7 +344,9 @@ PianoRoll::PianoRoll() :
 	m_backgroundShade( 0, 0, 0 ),
 	m_outOfBoundsShade(0, 0, 0, 128),
 	m_whiteKeyWidth(WHITE_KEY_WIDTH),
-	m_blackKeyWidth(BLACK_KEY_WIDTH)
+	m_blackKeyWidth(BLACK_KEY_WIDTH),
+	m_noteTimeIndex(std::make_unique<NoteTimeIndexCache>()),
+	m_ghostTimeIndex(std::make_unique<NoteTimeIndexCache>())
 {
 	// gui names of edit modes
 	m_nemStr.push_back( tr( "Note Velocity" ) );
@@ -618,6 +740,7 @@ void PianoRoll::markSemiTone(SemiToneMarkerAction i, bool fromMenu)
 void PianoRoll::setGhostMidiClip( MidiClip* newMidiClip )
 {
 	// Expects a pointer to a MIDI clip or nullptr.
+	forgetGhostIndex();
 	m_ghostNotes.clear();
 	if( newMidiClip != nullptr )
 	{
@@ -628,6 +751,7 @@ void PianoRoll::setGhostMidiClip( MidiClip* newMidiClip )
 		}
 		emit ghostClipSet( true );
 	}
+	invalidateGhostIndex();
 }
 
 
@@ -636,6 +760,7 @@ void PianoRoll::loadGhostNotes( const QDomElement & de )
 	// Load ghost notes from DOM element.
 	if( de.isElement() )
 	{
+		forgetGhostIndex();
 		QDomNode node = de.firstChild();
 		while( !node.isNull() )
 		{
@@ -645,6 +770,7 @@ void PianoRoll::loadGhostNotes( const QDomElement & de )
 			m_ghostNotes.push_back( n );
 			node = node.nextSibling();
 		}
+		invalidateGhostIndex();
 		emit ghostClipSet( true );
 	}
 }
@@ -769,6 +895,7 @@ void PianoRoll::fitNoteLengths(bool fill)
 		}
 	}
 
+	invalidateNoteIndex();
 	update();
 	getGUI()->songEditor()->update();
 	Engine::getSong()->setModified();
@@ -792,6 +919,7 @@ void PianoRoll::constrainNoteLengths(bool constrainMax)
 		}
 	}
 
+	invalidateNoteIndex();
 	update();
 	getGUI()->songEditor()->update();
 	Engine::getSong()->setModified();
@@ -840,6 +968,8 @@ void PianoRoll::loadMarkedSemiTones(const QDomElement & de)
 
 void PianoRoll::setCurrentMidiClip( MidiClip* newMidiClip )
 {
+	forgetNoteIndex();
+
 	if( hasValidMidiClip() )
 	{
 		m_midiClip->instrumentTrack()->pianoModel()->disconnect(this);
@@ -916,6 +1046,7 @@ void PianoRoll::setCurrentMidiClip( MidiClip* newMidiClip )
 
 	connect( m_midiClip->instrumentTrack(), SIGNAL( midiNoteOn( const lmms::Note& ) ), this, SLOT( startRecordNote( const lmms::Note& ) ) );
 	connect( m_midiClip->instrumentTrack(), SIGNAL( midiNoteOff( const lmms::Note& ) ), this, SLOT( finishRecordNote( const lmms::Note& ) ) );
+	connect(m_midiClip, &MidiClip::dataChanged, this, &PianoRoll::invalidateNoteIndex);
 	connect( m_midiClip, SIGNAL(dataChanged()), this, SLOT(update()));
 	connect( m_midiClip->instrumentTrack()->pianoModel(), SIGNAL(dataChanged()), this, SLOT(update()));
 
@@ -1589,6 +1720,8 @@ void PianoRoll::keyReleaseEvent(QKeyEvent* ke )
 		case Qt::Key_R:
 			if( hasValidMidiClip() && ke->modifiers() == Qt::ControlModifier )
 			{
+				// loadSettings already emits dataChanged; keep the same refresh path.
+				invalidateNoteIndex();
 				update();
 			}
 			break;
@@ -1703,7 +1836,13 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 			{
 				clickedNote->createDetuning();
 				AutomationClip* detuningClip = clickedNote->detuning()->automationClip();
+				connect(detuningClip, &AutomationClip::dataChanged, this, &PianoRoll::invalidateNoteIndex);
 				connect(detuningClip, SIGNAL(dataChanged()), this, SLOT(update()));
+			}
+			else if (clickedNote->detuning())
+			{
+				connect(clickedNote->detuning()->automationClip(), &AutomationClip::dataChanged,
+					this, &PianoRoll::invalidateNoteIndex, Qt::UniqueConnection);
 			}
 			getGUI()->automationEditor()->setGhostMidiClip(m_midiClip);
 			getGUI()->automationEditor()->open(clickedNote->detuning()->automationClip());
@@ -1722,11 +1861,19 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 		// Create detuning curves for each note if they don't have them already
 		for (Note* note: getSelectedNotes())
 		{
-			if (note->detuning() == nullptr)
+			const bool createdDetuning = note->detuning() == nullptr;
+			if (createdDetuning)
 			{
 				note->createDetuning();
+			}
+			if (note->detuning())
+			{
 				AutomationClip* detuningClip = note->detuning()->automationClip();
-				connect(detuningClip, SIGNAL(dataChanged()), this, SLOT(update()));
+				connect(detuningClip, &AutomationClip::dataChanged, this, &PianoRoll::invalidateNoteIndex, Qt::UniqueConnection);
+				if (createdDetuning)
+				{
+					connect(detuningClip, SIGNAL(dataChanged()), this, SLOT(update()));
+				}
 			}
 		}
 
@@ -1781,16 +1928,10 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 							m_currentPosition;
 
 
-			// get note-vector of current MIDI clip
-			const NoteVector & notes = m_midiClip->notes();
-
-			// will be our iterator in the following loop
-			auto it = notes.rbegin();
-
-			// loop through whole note-vector...
-			while (it != notes.rend())
+			// Same reverse-vector order as before: the last matching note wins.
+			// The index only supplies candidates; the hit test is unchanged.
+			auto noteHitsPress = [&](Note* note)
 			{
-				Note *note = *it;
 				TimePos len = note->length();
 				if( len < 0 )
 				{
@@ -1798,7 +1939,7 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 				}
 				// and check whether the user clicked on an
 				// existing note or an edit-line
-				if( pos_ticks >= note->pos() &&
+				return pos_ticks >= note->pos() &&
 						len > 0 &&
 					(
 					( ! edit_note &&
@@ -1808,12 +1949,36 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 					( edit_note &&
 					pos_ticks <= note->pos() +
 						NOTE_EDIT_LINE_WIDTH * TimePos::ticksPerBar() / m_ppb )
-					)
-					)
+					);
+			};
+			int queryStart = 0;
+			int queryEnd = 0;
+			noteTickQueryAround(pos_ticks, queryStart, queryEnd);
+			std::vector<Note*> pressCandidates;
+			const bool useNoteIndex = collectNoteCandidates(queryStart, queryEnd, pressCandidates);
+			Note* clickedNote = nullptr;
+			if (!useNoteIndex)
+			{
+				const NoteVector& notes = m_midiClip->notes();
+				for (auto it = notes.rbegin(); it != notes.rend(); ++it)
 				{
-					break;
+					if (noteHitsPress(*it))
+					{
+						clickedNote = *it;
+						break;
+					}
 				}
-				++it;
+			}
+			else
+			{
+				for (auto it = pressCandidates.rbegin(); it != pressCandidates.rend(); ++it)
+				{
+					if (noteHitsPress(*it))
+					{
+						clickedNote = *it;
+						break;
+					}
+				}
 			}
 
 			// first check whether the user clicked in note-edit-
@@ -1835,7 +2000,7 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 				Note * created_new_note = nullptr;
 				// did it reach end of vector because
 				// there's no note??
-				if (it == notes.rend())
+				if (clickedNote == nullptr)
 				{
 					is_new_note = true;
 					m_midiClip->addJournalCheckPoint();
@@ -1879,17 +2044,10 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 						}
 					}
 
-					// reset it so that it can be used for
-					// ops (move, resize) after this
-					// code-block
-					it = notes.rbegin();
-					while (it != notes.rend() && *it != created_new_note)
-					{
-						++it;
-					}
+					clickedNote = created_new_note;
 				}
 
-				Note *current_note = *it;
+				Note *current_note = clickedNote;
 				m_currentNote = current_note;
 				m_lastNotePanning = current_note->getPanning();
 				m_lastNoteVolume = current_note->getVolume();
@@ -1999,10 +2157,10 @@ void PianoRoll::mousePressEvent(QMouseEvent * me )
 			{
 				// erase single note
 				m_mouseDownRight = true;
-				if (it != notes.rend())
+				if (clickedNote != nullptr)
 				{
 					m_midiClip->addJournalCheckPoint();
-					m_midiClip->removeNote( *it );
+					m_midiClip->removeNote( clickedNote );
 					Engine::getSong()->setModified();
 				}
 			}
@@ -2398,6 +2556,7 @@ void PianoRoll::mouseReleaseEvent( QMouseEvent * me )
 			// moved properly according to new starting-
 			// time in the note-array of clip
 			m_midiClip->rearrangeAllNotes();
+			invalidateNoteIndex();
 
 		}
 		else if (m_action == Action::Strum || m_strumEnabled)
@@ -2699,31 +2858,50 @@ void PianoRoll::mouseMoveEvent( QMouseEvent * me )
 			// get note-vector of current MIDI clip
 			const NoteVector & notes = m_midiClip->notes();
 
-			// will be our iterator in the following loop
-			auto it = notes.rbegin();
-
-			// loop through whole note-vector...
-			while (it != notes.rend())
+			auto cursorOverNote = [&](const Note* note)
 			{
-				Note *note = *it;
 				// and check whether the cursor is over an
 				// existing note
-				if( pos_ticks >= note->pos() &&
+				return pos_ticks >= note->pos() &&
 			    		pos_ticks <= note->pos() +
 							note->length() &&
 					note->key() == key_num &&
-					note->length() > 0 )
+					note->length() > 0;
+			};
+			int queryStart = 0;
+			int queryEnd = 0;
+			noteTickQueryAround(pos_ticks, queryStart, queryEnd);
+			std::vector<Note*> hoverCandidates;
+			const bool useNoteIndex = collectNoteCandidates(queryStart, queryEnd, hoverCandidates);
+			Note* hoveredNote = nullptr;
+			if (!useNoteIndex)
+			{
+				for (auto it = notes.rbegin(); it != notes.rend(); ++it)
 				{
-					break;
+					if (cursorOverNote(*it))
+					{
+						hoveredNote = *it;
+						break;
+					}
 				}
-				++it;
+			}
+			else
+			{
+				for (auto it = hoverCandidates.rbegin(); it != hoverCandidates.rend(); ++it)
+				{
+					if (cursorOverNote(*it))
+					{
+						hoveredNote = *it;
+						break;
+					}
+				}
 			}
 
 			// did it reach end of vector because there's
 			// no note??
-			if (it != notes.rend())
+			if (hoveredNote != nullptr)
 			{
-				Note *note = *it;
+				Note *note = hoveredNote;
 				// x coordinate of the right edge of the note
 				int noteRightX = ( note->pos() + note->length() -
 					m_currentPosition) * m_ppb/TimePos::ticksPerBar();
@@ -2775,13 +2953,8 @@ void PianoRoll::mouseMoveEvent( QMouseEvent * me )
 			// get note-vector of current MIDI clip
 			const NoteVector & notes = m_midiClip->notes();
 
-			// will be our iterator in the following loop
-			auto it = notes.begin();
-
-			// loop through whole note-vector...
-			while( it != notes.end() )
+			auto eraseHit = [&](Note* note)
 			{
-				Note *note = *it;
 				TimePos len = note->length();
 				if( len < 0 )
 				{
@@ -2789,7 +2962,7 @@ void PianoRoll::mouseMoveEvent( QMouseEvent * me )
 				}
 				// and check whether the user clicked on an
 				// existing note or an edit-line
-				if( pos_ticks >= note->pos() &&
+				return pos_ticks >= note->pos() &&
 						len > 0 &&
 					(
 					( ! edit_note &&
@@ -2801,16 +2974,42 @@ void PianoRoll::mouseMoveEvent( QMouseEvent * me )
 							NOTE_EDIT_LINE_WIDTH *
 						TimePos::ticksPerBar() /
 								m_ppb )
-					)
-					)
+					);
+			};
+			int queryStart = 0;
+			int queryEnd = 0;
+			noteTickQueryAround(pos_ticks, queryStart, queryEnd);
+			std::vector<Note*> eraseCandidates;
+			const bool useNoteIndex = collectNoteCandidates(queryStart, queryEnd, eraseCandidates);
+			if (!useNoteIndex)
+			{
+				// loop through whole note-vector...
+				auto it = notes.begin();
+				while( it != notes.end() )
 				{
-					// delete this note
-					it = m_midiClip->removeNote(it);
-					Engine::getSong()->setModified();
+					Note *note = *it;
+					if (eraseHit(note))
+					{
+						// delete this note
+						it = m_midiClip->removeNote(it);
+						Engine::getSong()->setModified();
+					}
+					else
+					{
+						++it;
+					}
 				}
-				else
+			}
+			else
+			{
+				// Ascending index order matches the old forward scan.
+				for (Note* note : eraseCandidates)
 				{
-					++it;
+					if (eraseHit(note))
+					{
+						m_midiClip->removeNote(note);
+						Engine::getSong()->setModified();
+					}
 				}
 			}
 		}
@@ -2912,6 +3111,7 @@ void PianoRoll::updateParameterEditPos(QMouseEvent* me, Note::ParameterType para
 		}
 	}
 	if (updateLastEditTick) { m_lastParameterEditTick = posTicks; }
+	invalidateNoteIndex();
 }
 
 void PianoRoll::applyParameterEditPos(Note::ParameterType paramType)
@@ -2930,6 +3130,7 @@ void PianoRoll::applyParameterEditPos(Note::ParameterType paramType)
 	m_parameterEditDownRight = false;
 	m_parameterEditDownLeft = false;
 	m_parameterEditClickedNote = nullptr;
+	invalidateNoteIndex();
 }
 
 
@@ -2970,6 +3171,7 @@ void PianoRoll::setupSelectedChords()
 	if (!hasValidMidiClip()) { return; }
 	m_selectedChords.clear();
 	m_midiClip->rearrangeAllNotes();
+	invalidateNoteIndex();
 
 	const NoteVector& selectedNotes = getSelectedNotes();
 	if (selectedNotes.empty()) { return; }
@@ -3717,16 +3919,25 @@ void PianoRoll::paintEvent(QPaintEvent * pe )
 			return (topKey - key) * m_keyLineHeight + keyAreaTop() - 1;
 		};
 
+		// Tick window is wider than the viewport by a bar so notes that start
+		// off-screen, and detuning curves, are still candidates. Each note is
+		// still tested for visibility below. Clips under 256 notes stay linear.
+		int viewTickStart = 0;
+		int viewTickEnd = 0;
+		visibleNoteTickQuery(viewTickStart, viewTickEnd);
+
 		// -- Begin ghost MIDI clip
 		if( !m_ghostNotes.empty() )
 		{
-			for( const Note *note : m_ghostNotes )
+			std::vector<Note*> ghostCandidates;
+			const bool useGhostIndex = collectGhostCandidates(viewTickStart, viewTickEnd, ghostCandidates);
+			auto drawGhostNote = [&](const Note* note)
 			{
 				int len_ticks = note->length();
 
 				if( len_ticks == 0 )
 				{
-					continue;
+					return;
 				}
 				else if( len_ticks < 0 )
 				{
@@ -3741,7 +3952,7 @@ void PianoRoll::paintEvent(QPaintEvent * pe )
 				// skip this note if not in visible area at all
 				if (!(x + note_width >= 0 && x <= width() - m_whiteKeyWidth))
 				{
-					continue;
+					return;
 				}
 
 				// is the note in visible area?
@@ -3755,17 +3966,33 @@ void PianoRoll::paintEvent(QPaintEvent * pe )
 						m_ghostNoteOpacity, m_ghostNoteBorders, drawNoteNames);
 				}
 
+			};
+			if (!useGhostIndex)
+			{
+				for( const Note *note : m_ghostNotes )
+				{
+					drawGhostNote(note);
+				}
+			}
+			else
+			{
+				for (const Note* note : ghostCandidates)
+				{
+					drawGhostNote(note);
+				}
 			}
 		}
 		// -- End ghost MIDI clip
 
-		for( const Note *note : m_midiClip->notes() )
+		std::vector<Note*> noteCandidates;
+		const bool useNoteIndex = collectNoteCandidates(viewTickStart, viewTickEnd, noteCandidates);
+		auto drawClipNote = [&](const Note* note)
 		{
 			int len_ticks = note->length();
 
 			if( len_ticks == 0 )
 			{
-				continue;
+				return;
 			}
 			else if( len_ticks < 0 )
 			{
@@ -3785,7 +4012,7 @@ void PianoRoll::paintEvent(QPaintEvent * pe )
 			// But still draw the note if the detuning curve extends past the end of it.
 			if (!(x + std::max(note_width, detuningLength) >= 0 && x <= width() - m_whiteKeyWidth))
 			{
-				continue;
+				return;
 			}
 
 			// is the note in visible area?
@@ -3852,6 +4079,20 @@ void PianoRoll::paintEvent(QPaintEvent * pe )
 					PR_TOP_MARGIN,
 					width() - m_whiteKeyWidth,
 					height() - PR_TOP_MARGIN);
+			}
+		};
+		if (!useNoteIndex)
+		{
+			for( const Note *note : m_midiClip->notes() )
+			{
+				drawClipNote(note);
+			}
+		}
+		else
+		{
+			for (const Note* note : noteCandidates)
+			{
+				drawClipNote(note);
 			}
 		}
 
@@ -5076,6 +5317,128 @@ TimePos PianoRoll::newNoteLen() const
 
 
 
+void PianoRoll::invalidateNoteIndex()
+{
+	if (m_noteTimeIndex)
+	{
+		m_noteTimeIndex->invalidate();
+	}
+}
+
+
+
+
+void PianoRoll::forgetNoteIndex()
+{
+	if (m_noteTimeIndex)
+	{
+		m_noteTimeIndex->forget();
+	}
+}
+
+
+
+
+void PianoRoll::invalidateGhostIndex()
+{
+	if (m_ghostTimeIndex)
+	{
+		m_ghostTimeIndex->invalidate();
+	}
+}
+
+
+
+
+void PianoRoll::forgetGhostIndex()
+{
+	if (m_ghostTimeIndex)
+	{
+		m_ghostTimeIndex->forget();
+	}
+}
+
+
+
+
+int PianoRoll::noteCandidateMarginTicks() const
+{
+	const int bar = TimePos::ticksPerBar();
+	if (m_ppb <= 0)
+	{
+		return bar;
+	}
+	// Edit-lane hits extend a few pixels past the note start. A bar covers
+	// that at every current zoom and absorbs integer pixel/tick truncation.
+	const int editLineTicks = NOTE_EDIT_LINE_WIDTH * bar / m_ppb + 1;
+	return std::max(bar, editLineTicks);
+}
+
+
+
+
+void PianoRoll::noteTickQueryAround(int tick, int& rangeStart, int& rangeEnd) const
+{
+	const int margin = noteCandidateMarginTicks();
+	const long long minTick = std::numeric_limits<int>::min();
+	const long long maxTick = std::numeric_limits<int>::max();
+	const long long start = static_cast<long long>(tick) - margin;
+	const long long end = static_cast<long long>(tick) + margin;
+	rangeStart = static_cast<int>(std::max(start, minTick));
+	rangeEnd = static_cast<int>(std::min(end, maxTick));
+}
+
+
+
+
+void PianoRoll::visibleNoteTickQuery(int& rangeStart, int& rangeEnd) const
+{
+	const int margin = noteCandidateMarginTicks();
+	const long long minTick = std::numeric_limits<int>::min();
+	const long long maxTick = std::numeric_limits<int>::max();
+	const int origin = static_cast<int>(m_currentPosition);
+	const long long start = static_cast<long long>(origin) - margin;
+	long long end = static_cast<long long>(origin) + margin;
+	if (m_ppb > 0)
+	{
+		const int viewPixels = std::max(0, width() - m_whiteKeyWidth);
+		const long long spanTicks =
+			(static_cast<long long>(viewPixels) * TimePos::ticksPerBar() + m_ppb - 1) / m_ppb;
+		end = static_cast<long long>(origin) + spanTicks + margin;
+	}
+	rangeStart = static_cast<int>(std::max(start, minTick));
+	rangeEnd = static_cast<int>(std::min(end, maxTick));
+}
+
+
+
+
+bool PianoRoll::collectNoteCandidates(int rangeStart, int rangeEnd, std::vector<Note*>& out)
+{
+	out.clear();
+	if (!hasValidMidiClip() || !m_noteTimeIndex)
+	{
+		return false;
+	}
+	return m_noteTimeIndex->collect(m_midiClip->notes(), rangeStart, rangeEnd, out);
+}
+
+
+
+
+bool PianoRoll::collectGhostCandidates(int rangeStart, int rangeEnd, std::vector<Note*>& out)
+{
+	out.clear();
+	if (!m_ghostTimeIndex)
+	{
+		return false;
+	}
+	return m_ghostTimeIndex->collect(m_ghostNotes, rangeStart, rangeEnd, out);
+}
+
+
+
+
 bool PianoRoll::mouseOverNote()
 {
 	return hasValidMidiClip() && noteUnderMouse() != nullptr;
@@ -5100,17 +5463,39 @@ Note * PianoRoll::noteUnderMouse()
 	int pos_ticks = (pos.x() - m_whiteKeyWidth) *
 			TimePos::ticksPerBar() / m_ppb + m_currentPosition;
 
-	// loop through whole note-vector...
-	for( Note* const& note : m_midiClip->notes() )
+	auto underCursor = [&](const Note* note)
 	{
 		// and check whether the cursor is over an
 		// existing note
-		if( pos_ticks >= note->pos()
+		return pos_ticks >= note->pos()
 				&& pos_ticks <= note->endPos()
 				&& note->key() == key_num
-				&& note->length() > 0 )
+				&& note->length() > 0;
+	};
+
+	int queryStart = 0;
+	int queryEnd = 0;
+	noteTickQueryAround(pos_ticks, queryStart, queryEnd);
+	std::vector<Note*> candidates;
+	// Forward order matches the old scan: the earliest note in the clip wins.
+	if (!collectNoteCandidates(queryStart, queryEnd, candidates))
+	{
+		for( Note* const& note : m_midiClip->notes() )
 		{
-			return note;
+			if (underCursor(note))
+			{
+				return note;
+			}
+		}
+	}
+	else
+	{
+		for (Note* note : candidates)
+		{
+			if (underCursor(note))
+			{
+				return note;
+			}
 		}
 	}
 

@@ -31,6 +31,7 @@
 #include "FontHelper.h"
 #include "MainWindow.h"
 #include "AudioEngine.h"
+#include "DpiContext.h"
 #include "Engine.h"
 #include "Song.h"
 #include "embed.h"
@@ -41,24 +42,46 @@ namespace lmms::gui
 
 Oscilloscope::Oscilloscope( QWidget * _p ) :
 	QWidget( _p ),
-	m_background( embed::getIconPixmap( "output_graph" ) ),
-	m_points( new QPointF[Engine::audioEngine()->framesPerPeriod()] ),
+	m_background(),
+	m_points( nullptr ),
 	m_active( false ),
 	m_leftChannelColor(71, 253, 133),
 	m_rightChannelColor(71, 253, 133),
 	m_otherChannelsColor(71, 253, 133),
 	m_clippingColor(255, 64, 64)
 {
-	setFixedSize( m_background.width(), m_background.height() );
+	reloadBackground();
+	Dpi::watch(this, [this] { reloadBackground(); });
+	ensureFrames(Engine::audioEngine()->framesPerPeriod());
 	setActive( ConfigManager::inst()->value( "ui", "displaywaveform").toInt() );
-
-	const f_cnt_t frames = Engine::audioEngine()->framesPerPeriod();
-	m_buffer = new SampleFrame[frames];
-
-	zeroSampleFrames(m_buffer, frames);
-
-
+	setAccessibleName(tr("Oscilloscope"));
 	setToolTip(tr("Oscilloscope"));
+}
+
+void Oscilloscope::reloadBackground()
+{
+	const qreal dpr = Dpi::effectiveDevicePixelRatio(this);
+	const auto resource = embed::getIconResource("output_graph", {QSize(-1, -1), dpr});
+	m_background = resource.pixmap;
+	if (resource.logicalSize.isValid() && !resource.logicalSize.isEmpty())
+	{
+		setFixedSize(resource.logicalSize);
+	}
+	update();
+}
+
+void Oscilloscope::ensureFrames(f_cnt_t frames)
+{
+	if (frames <= 0) { frames = 1; }
+	if (frames > AudioDisplayBuffer::kMaxFrames) { frames = AudioDisplayBuffer::kMaxFrames; }
+	if (m_buffer != nullptr && m_points != nullptr && m_frameCount == frames) { return; }
+	delete[] m_buffer;
+	delete[] m_points;
+	m_frameCount = frames;
+	if (m_drawnFrames > frames) { m_drawnFrames = frames; }
+	m_buffer = new SampleFrame[frames];
+	m_points = new QPointF[frames];
+	zeroSampleFrames(m_buffer, frames);
 }
 
 
@@ -73,38 +96,18 @@ Oscilloscope::~Oscilloscope()
 
 
 
-void Oscilloscope::updateAudioBuffer(const SampleFrame* buffer)
-{
-	if( !Engine::getSong()->isExporting() )
-	{
-		const f_cnt_t frames = Engine::audioEngine()->framesPerPeriod();
-		memcpy(m_buffer, buffer, sizeof(SampleFrame) * frames);
-	}
-}
-
-
-
-
 void Oscilloscope::setActive( bool _active )
 {
 	m_active = _active;
 	if( m_active )
 	{
-		connect( getGUI()->mainWindow(),
-					SIGNAL(periodicUpdate()),
-					this, SLOT(update()));
-		connect( Engine::audioEngine(),
-			SIGNAL(nextAudioBuffer(const lmms::SampleFrame*)),
-			this, SLOT(updateAudioBuffer(const lmms::SampleFrame*)));
+		connect(getGUI()->mainWindow(), SIGNAL(periodicUpdate()), this, SLOT(update()), Qt::UniqueConnection);
 	}
 	else
 	{
 		disconnect( getGUI()->mainWindow(),
 					SIGNAL(periodicUpdate()),
 					this, SLOT(update()));
-		disconnect( Engine::audioEngine(),
-			SIGNAL(nextAudioBuffer(const lmms::SampleFrame*)),
-			this, SLOT(updateAudioBuffer(const lmms::SampleFrame*)));
 		// we have to update (remove last waves),
 		// because timer doesn't do that anymore
 		update();
@@ -159,13 +162,26 @@ void Oscilloscope::paintEvent( QPaintEvent * )
 
 	p.drawPixmap( 0, 0, m_background );
 
-	if( m_active && !Engine::getSong()->isExporting() )
+	if( m_active && !Engine::getSong()->isExporting() && isVisible() )
 	{
-		AudioEngine const * audioEngine = Engine::audioEngine();
+		AudioEngine* audioEngine = Engine::audioEngine();
+		f_cnt_t frames = 0;
+		ensureFrames(audioEngine->framesPerPeriod());
+		if (audioEngine->displayBuffer().copyLatest(m_buffer, m_frameCount, frames) && frames > 0)
+		{
+			m_drawnFrames = frames;
+		}
+		else
+		{
+			// Keep the previous complete snapshot. A failed copy does not
+			// write m_buffer, so stretching it to the full allocation would
+			// draw a torn or empty period.
+			frames = m_drawnFrames;
+		}
+		if (frames <= 0) { return; }
 
 		float masterOutput = audioEngine->masterGain();
 
-		const f_cnt_t frames = audioEngine->framesPerPeriod();
 		SampleFrame peakValues = getAbsPeakValues(m_buffer, frames);
 
 		auto const leftChannelClips = clips(peakValues.left() * masterOutput);

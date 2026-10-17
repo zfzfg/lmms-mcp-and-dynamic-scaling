@@ -28,7 +28,10 @@
 
 #include <QDateTime>
 #include <QRect>
+#include <cstdint>
 #include <memory>
+#include <unordered_map>
+#include <utility>
 
 #include "lmms_export.h"
 #include "SampleBuffer.h"
@@ -70,6 +73,33 @@ public:
 		float sampleEnd = 1.0f;     //!< Where the sample ends for drawing.
 		bool reversed = false;      //!< Determines if the waveform is drawn in reverse or not.
 	};
+
+	struct ColumnSpan
+	{
+		size_t begin = 0;
+		size_t end = 0;
+		bool empty() const { return begin >= end; }
+	};
+
+	enum class WaveformSource
+	{
+		Empty,
+		Frames,
+		Peaks
+	};
+
+	struct SourceChoice
+	{
+		WaveformSource kind = WaveformSource::Empty;
+		size_t width = 0;
+	};
+
+	static ColumnSpan columnSpan(size_t sourceWidth, int column, int targetWidth);
+	static SourceChoice chooseSource(size_t frameCount, size_t finestPeakWidth, int targetWidth);
+	static auto contentRevisionOf(const SampleBuffer& buffer) -> quint64;
+	static std::pair<float, float> peakOverFrames(const SampleFrame* frames, size_t frameCount, size_t begin, size_t end);
+	static std::size_t cacheBytes();
+	static void clearCache();
 
 	SampleThumbnail() = default;
 	SampleThumbnail(const Sample& sample);
@@ -124,22 +154,39 @@ private:
 	{
 		QString filePath;
 		QDateTime lastModified;
+		qint64 byteSize = 0;
+		quint64 contentRevision = 0;
 
 		friend bool operator==(const SampleThumbnailEntry& first, const SampleThumbnailEntry& second)
 		{
-			return first.filePath == second.filePath && first.lastModified == second.lastModified;
+			return first.filePath == second.filePath && first.lastModified == second.lastModified
+				&& first.byteSize == second.byteSize && first.contentRevision == second.contentRevision;
 		}
 	};
 
 	struct Hash
 	{
-		std::size_t operator()(const SampleThumbnailEntry& entry) const noexcept { return qHash(entry.filePath); }
+		std::size_t operator()(const SampleThumbnailEntry& entry) const noexcept
+		{
+			return qHash(entry.filePath) ^ static_cast<std::size_t>(entry.byteSize)
+				^ static_cast<std::size_t>(entry.contentRevision);
+		}
 	};
 
 	using ThumbnailCache = std::vector<Thumbnail>;
+
+	struct CacheRecord
+	{
+		std::shared_ptr<ThumbnailCache> cache;
+		std::size_t bytes = 0;
+		std::uint64_t lastUse = 0;
+	};
 	std::shared_ptr<ThumbnailCache> m_thumbnailCache = std::make_shared<ThumbnailCache>();
 	std::shared_ptr<const SampleBuffer> m_buffer = SampleBuffer::emptyBuffer();
-	inline static std::unordered_map<SampleThumbnailEntry, std::shared_ptr<ThumbnailCache>, Hash> s_sampleThumbnailCacheMap;
+	static constexpr std::size_t kMaxCacheEntries = 32;
+	static constexpr std::size_t kMaxCacheBytes = 64 * 1024 * 1024;
+	inline static std::uint64_t s_cacheTick = 1;
+	inline static std::unordered_map<SampleThumbnailEntry, CacheRecord, Hash> s_sampleThumbnailCacheMap;
 };
 
 } // namespace lmms::gui

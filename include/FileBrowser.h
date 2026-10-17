@@ -31,6 +31,9 @@
 #include "FileSearchJob.h"
 #include "embed.h"
 
+#include <memory>
+
+#include <QStringList>
 #include <QTreeWidget>
 
 #include "SideBarWidget.h"
@@ -39,12 +42,14 @@
 class QCheckBox;
 class QLineEdit;
 class QProgressBar;
+class QTimer;
 
 namespace lmms
 {
 
 class InstrumentTrack;
 class PlayHandle;
+class SampleBuffer;
 class TrackContainer;
 
 namespace gui
@@ -97,10 +102,25 @@ private:
 	void saveDirectoriesStates();
 	void restoreDirectoriesStates();
 
+	enum class SearchIndicatorState
+	{
+		Loading,
+		Cancelled,
+		Error,
+		Finished
+	};
+
+	void updateSearchIndicator(SearchIndicatorState state, const QString& detail = {});
+	void scheduleSearch(const QString& filter);
+	void performDebouncedSearch();
+	void cancelActiveSearch();
+
 	void onSearch(const QString& filter);
-	void onSearchMatch(const QString& path);
-	void onSearchStarted();
-	void onSearchFinished();
+	void onSearchMatches(quint64 generation, const QStringList& paths);
+	void onSearchStarted(quint64 generation);
+	void onSearchFinished(quint64 generation);
+	void onSearchCancelled(quint64 generation);
+	void onSearchFailed(quint64 generation, const QString& message);
 
 	void addContentCheckBox();
 
@@ -111,7 +131,9 @@ private:
 	Type m_type;
 
 	QProgressBar* m_searchIndicator = nullptr;
+	QTimer* m_searchDebounceTimer = nullptr;
 	FileSearchJob m_searchJob;
+	quint64 m_searchGeneration = 0;
 
 	QString m_directories; //!< Directories to search, split with '*'
 	QString m_filter; //!< Filter as used in QDir::match()
@@ -158,7 +180,11 @@ protected:
 private:
 	//! Start a preview of a file item
 	void previewFileItem(FileItem* file);
-	//! If a preview is playing, stop it.
+	//! Decode a sample off the GUI thread. Playback starts only for @p generation.
+	void enqueueSamplePreview(quint64 generation, const QString& fileName);
+	void applySamplePreview(quint64 generation, const std::shared_ptr<const SampleBuffer>& buffer);
+	void showSamplePreviewError();
+	//! If a preview is playing, stop it. Also drops a sample load that has not started.
 	void stopPreview();
 
 	void handleFile( FileItem * fi, InstrumentTrack * it );
@@ -172,6 +198,10 @@ private:
 	PlayHandle* m_previewPlayHandle;
 
 	QRecursiveMutex m_pphMutex;
+
+	//! Sample loads with any other value must not start playback.
+	quint64 m_previewGeneration = 0;
+	bool m_samplePreviewPending = false;
 
 	QList<QAction*> getContextActions(FileItem* item, bool songEditor);
 

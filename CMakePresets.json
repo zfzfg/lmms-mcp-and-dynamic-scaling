@@ -1,0 +1,52 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-qt5-msvc-v142",
+      "displayName": "Windows reference: Qt 5.15.2, MSVC v142, x64",
+      "description": "Supported Windows toolchain from the high-DPI CI job. Set LMMS_QT5_PREFIX and LMMS_DEPS_PREFIX to the Qt and dependency prefixes.",
+      "generator": "Visual Studio 16 2019",
+      "architecture": "x64",
+      "toolset": "v142",
+      "binaryDir": "${sourceDir}/build/reference-qt5",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{LMMS_QT5_PREFIX};$env{LMMS_DEPS_PREFIX}",
+        "BUILD_TESTING": "ON",
+        "WANT_QT6": "OFF",
+        "WANT_MCP": "ON"
+      }
+    },
+    {
+      "name": "windows-qt5-msvc-v142-no-mcp",
+      "displayName": "Windows reference without MCP",
+      "inherits": "windows-qt5-msvc-v142",
+      "binaryDir": "${sourceDir}/build/reference-qt5-no-mcp",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{LMMS_QT5_PREFIX};$env{LMMS_DEPS_PREFIX}",
+        "BUILD_TESTING": "ON",
+        "WANT_QT6": "OFF",
+        "WANT_MCP": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-qt5-release",
+      "configurePreset": "windows-qt5-msvc-v142",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-qt5-release-no-mcp",
+      "configurePreset": "windows-qt5-msvc-v142-no-mcp",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-qt5-release",
+      "configurePreset": "windows-qt5-msvc-v142",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

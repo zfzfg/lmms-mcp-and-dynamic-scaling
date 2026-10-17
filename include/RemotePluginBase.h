@@ -67,6 +67,7 @@
 
 #ifndef SYNC_WITH_SHM_FIFO
 #include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>  // IWYU pragma: keep
 #endif // SYNC_WITH_SHM_FIFO
 
@@ -167,6 +168,12 @@ public:
 	// recursive unlock
 	inline void unlock()
 	{
+		// lock() does not take the semaphore once the fifo is invalid.
+		// A matching unlock must not release a permit we never acquired.
+		if( m_lockDepth.load() <= 0 )
+		{
+			return;
+		}
 		if( m_lockDepth.fetch_sub( 1 ) <= 1 )
 		{
 			m_dataSem.release();
@@ -180,6 +187,18 @@ public:
 		{
 			m_messageSem.acquire();
 		}
+	}
+
+	//! Returns false when @p timeoutMs elapses or the link is invalid. Negative waits without a deadline.
+	inline bool waitForMessageTimed(int timeoutMs)
+	{
+		if (isInvalid()) { return false; }
+		if (timeoutMs < 0)
+		{
+			m_messageSem.acquire();
+			return !isInvalid();
+		}
+		return m_messageSem.tryAcquireFor(timeoutMs);
 	}
 
 	// increase message-semaphore
@@ -258,7 +277,18 @@ private:
 #ifndef LMMS_BUILD_WIN32
 			usleep( 5 );
 #endif
+			if( isInvalid() )
+			{
+				memset( _buf, 0, _len );
+				return;
+			}
 			lock();
+		}
+		if( isInvalid() )
+		{
+			unlock();
+			memset( _buf, 0, _len );
+			return;
 		}
 		std::memcpy(_buf, m_data->data + m_data->startPtr, _len);
 		m_data->startPtr += _len;
@@ -280,6 +310,11 @@ private:
 		lock();
 		while( _len > SHM_FIFO_SIZE - m_data->endPtr )
 		{
+			if( isInvalid() )
+			{
+				unlock();
+				return;
+			}
 			// if no space is left, try to move data to front
 			if( m_data->startPtr > 0 )
 			{
@@ -294,7 +329,16 @@ private:
 #ifndef LMMS_BUILD_WIN32
 			usleep( 5 );
 #endif
+			if( isInvalid() )
+			{
+				return;
+			}
 			lock();
+		}
+		if( isInvalid() )
+		{
+			unlock();
+			return;
 		}
 		std::memcpy(m_data->data + m_data->endPtr, _buf, _len);
 		m_data->endPtr += _len;
@@ -311,6 +355,15 @@ private:
 #endif // SYNC_WITH_SHM_FIFO
 
 
+
+// Host deadlines in milliseconds. waitForMessage uses steady_clock.
+// A negative timeout on the host selects the message budget; the remote
+// client keeps an unbounded wait unless it passes a positive timeout.
+constexpr int kRemotePluginInitTimeoutMs = 15000;
+constexpr int kRemotePluginMessageTimeoutMs = 5000;
+constexpr int kRemotePluginShutdownTimeoutMs = 3000;
+constexpr int kRemotePluginAudioTimeoutFallbackMs = 20;
+constexpr int kRemotePluginAudioTimeoutMaxMs = 50;
 
 enum RemoteMessageIDs
 {
@@ -442,7 +495,7 @@ public:
 #endif
 
 	int sendMessage( const message & _m );
-	message receiveMessage();
+	message receiveMessage(int timeoutMs = -1);
 
 	inline bool isInvalid() const
 	{
@@ -454,7 +507,8 @@ public:
 	}
 
 	message waitForMessage( const message & _m,
-						bool _busy_waiting = false );
+						bool _busy_waiting = false,
+						int timeoutMs = -1 );
 
 	inline message fetchAndProcessNextMessage()
 	{
@@ -504,7 +558,11 @@ public:
 #ifdef SYNC_WITH_SHM_FIFO
 		return m_in->messagesLeft();
 #else
-		struct pollfd pollin;
+		if( m_invalid || m_socket < 0 )
+		{
+			return false;
+		}
+		struct pollfd pollin = {};
 		pollin.fd = m_socket;
 		pollin.events = POLLIN;
 
@@ -551,9 +609,15 @@ protected:
 #ifdef SYNC_WITH_SHM_FIFO
 		m_in->invalidate();
 		m_out->invalidate();
+		// Wake host threads blocked in the message semaphore or in read/write.
 		m_in->messageSent();
 #else
 		m_invalid = true;
+		// Unblock a reader or writer stuck in the socket.
+		if( m_socket >= 0 )
+		{
+			::shutdown( m_socket, SHUT_RDWR );
+		}
 #endif
 	}
 

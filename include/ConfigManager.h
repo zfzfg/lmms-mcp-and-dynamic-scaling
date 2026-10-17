@@ -202,10 +202,14 @@ public:
 		return m_dataDir + TRACK_ICON_PATH;
 	}
 
-	const QString recoveryFile() const
-	{
-		return m_workingDir + "recover.mmp";
-	}
+	QString recoveryFile() const;
+	QString recoveryLockFile() const;
+
+	//! Recovery files whose owning process is no longer alive, plus a legacy `recover.mmp`.
+	QStringList orphanedRecoveryFiles() const;
+
+	//! Deletes a recovery file only when it belongs to this process or its owner is gone.
+	bool discardRecoveryFile(const QString& path);
 
 	inline const QStringList & recentlyOpenedProjects() const
 	{
@@ -282,6 +286,8 @@ private:
 	void upgrade_1_1_91();
 	void upgrade_1_2_2();
 	void upgrade();
+	void publishRecoveryLock();
+	static bool recoveryOwnerAlive(const QString& lockPath);
 
 	// List of all upgrade methods
 	static const std::vector<UpgradeMethod> UPGRADE_METHODS;
@@ -303,6 +309,8 @@ private:
 	QString m_lmmsRcFile;
 	QString m_version;
 	unsigned int m_configVersion;
+	QString m_recoveryInstanceId;
+	QString m_recoveryLockPath;
 	QStringList m_recentlyOpenedProjects;
 	QStringList m_favoriteItems;
 

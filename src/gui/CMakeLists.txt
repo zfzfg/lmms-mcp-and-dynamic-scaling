@@ -18,6 +18,7 @@ SET(LMMS_SRCS
 	gui/FileRevealer.cpp
 	gui/FileSearchJob.cpp
 	gui/GuiApplication.cpp
+	gui/GuiResponsiveness.cpp
 	gui/LadspaControlView.cpp
 	gui/LfoControllerDialog.cpp
 	gui/LinkedModelGroupViews.cpp

@@ -24,6 +24,11 @@
 
 #include "AudioEngine.h"
 
+#include <algorithm>
+#include <cstdlib>
+
+#include <QDebug>
+
 #include "MixHelpers.h"
 
 #include "lmmsconfig.h"
@@ -64,6 +69,13 @@ using LocklessListElement = LocklessList<PlayHandle*>::Element;
 
 static thread_local bool s_renderingThread = false;
 
+int detectedWorkerCount()
+{
+	const int ideal = QThread::idealThreadCount();
+	const int detected = ideal < 1 ? 1 : ideal;
+	return std::clamp(detected - 1, 0, 16);
+}
+
 AudioEngine::AudioEngine(bool renderOnly)
 	: m_renderOnly(renderOnly)
 	, m_framesPerAudioBuffer(std::clamp(
@@ -79,7 +91,7 @@ AudioEngine::AudioEngine(bool renderOnly)
 	, m_outputBufferWrite(nullptr)
 	, m_outputBufferReadIndex(0)
 	, m_workers()
-	, m_numWorkers(QThread::idealThreadCount() - 1)
+	, m_numWorkers(detectedWorkerCount())
 	, m_newPlayHandles(PlayHandle::MaxNumber)
 	, m_masterGain(1.0f)
 	, m_audioDev(nullptr)
@@ -100,6 +112,7 @@ AudioEngine::AudioEngine(bool renderOnly)
 	BufferManager::init( m_framesPerPeriod );
 	m_outputBufferRead = std::make_unique<SampleFrame[]>(m_framesPerPeriod);
 	m_outputBufferWrite = std::make_unique<SampleFrame[]>(m_framesPerPeriod);
+	m_deferredDeletes.reserve(256);
 
 
 	for( int i = 0; i < m_numWorkers+1; ++i )
@@ -123,12 +136,16 @@ AudioEngine::~AudioEngine()
 		m_workers[w]->quit();
 	}
 
-	AudioEngineWorkerThread::startAndWaitForJobs();
-
 	for( int w = 0; w < m_numWorkers; ++w )
 	{
-		m_workers[w]->wait( 500 );
+		if (!m_workers[w]->wait(3000))
+		{
+			qCritical("Audio worker %d is still inside a job; aborting instead of freeing it", w);
+			std::abort();
+		}
 	}
+	for (auto* handle : m_deferredDeletes) { delete handle; }
+	m_deferredDeletes.clear();
 
 	delete m_midiClient;
 	delete m_audioDev;
@@ -206,26 +223,32 @@ void AudioEngine::renderStageNoteSetup()
 		clearInternal();
 	}
 
-	// remove all play-handles that have to be deleted and delete
-	// them if they still exist...
-	// maybe this algorithm could be optimized...
-	ConstPlayHandleList::Iterator it_rem = m_playHandlesToRemove.begin();
-	while( it_rem != m_playHandlesToRemove.end() )
+	// Destructors from the previous period run here, after workers have joined.
+	for (auto* handle : m_deferredDeletes) { delete handle; }
+	m_deferredDeletes.clear();
+
+	// One pass over the active handles instead of a linear search per removal.
+	if (!m_playHandlesToRemove.isEmpty())
 	{
-		PlayHandleList::Iterator it = std::find( m_playHandles.begin(), m_playHandles.end(), *it_rem );
-
-		if( it != m_playHandles.end() )
+		for (auto it = m_playHandles.begin(); it != m_playHandles.end();)
 		{
-			(*it)->audioBusHandle()->removePlayHandle(*it);
-			if((*it)->type() == PlayHandle::Type::NotePlayHandle)
+			if (std::find(m_playHandlesToRemove.begin(), m_playHandlesToRemove.end(), *it) == m_playHandlesToRemove.end())
 			{
-				NotePlayHandleManager::release((NotePlayHandle*)*it);
+				++it;
+				continue;
 			}
-			else delete *it;
-			m_playHandles.erase(it);
+			(*it)->audioBusHandle()->removePlayHandle(*it);
+			if ((*it)->type() == PlayHandle::Type::NotePlayHandle)
+			{
+				NotePlayHandleManager::release(static_cast<NotePlayHandle*>(*it));
+			}
+			else
+			{
+				m_deferredDeletes.push_back(*it);
+			}
+			it = m_playHandles.erase(it);
 		}
-
-		it_rem = m_playHandlesToRemove.erase( it_rem );
+		m_playHandlesToRemove.clear();
 	}
 
 	swapBuffers();
@@ -249,23 +272,23 @@ void AudioEngine::renderStageNoteSetup()
 
 
 
-void AudioEngine::renderStageInstruments()
+bool AudioEngine::renderStageInstruments()
 {
 	AudioEngineProfiler::Probe profilerProbe(m_profiler, AudioEngineProfiler::DetailType::Instruments);
 
-	AudioEngineWorkerThread::fillJobQueue(m_playHandles);
-	AudioEngineWorkerThread::startAndWaitForJobs();
+	if (!AudioEngineWorkerThread::fillJobQueue(m_playHandles)) { return false; }
+	return AudioEngineWorkerThread::startAndWaitForJobs();
 }
 
 
 
-void AudioEngine::renderStageEffects()
+bool AudioEngine::renderStageEffects()
 {
 	AudioEngineProfiler::Probe profilerProbe(m_profiler, AudioEngineProfiler::DetailType::Effects);
 
 	// STAGE 2: process effects of all instrument- and sampletracks
-	AudioEngineWorkerThread::fillJobQueue(m_audioBusHandles);
-	AudioEngineWorkerThread::startAndWaitForJobs();
+	if (!AudioEngineWorkerThread::fillJobQueue(m_audioBusHandles)) { return false; }
+	if (!AudioEngineWorkerThread::startAndWaitForJobs()) { return false; }
 
 	// removed all play handles which are done
 	for( PlayHandleList::Iterator it = m_playHandles.begin();
@@ -282,9 +305,12 @@ void AudioEngine::renderStageEffects()
 			(*it)->audioBusHandle()->removePlayHandle(*it);
 			if((*it)->type() == PlayHandle::Type::NotePlayHandle)
 			{
-				NotePlayHandleManager::release((NotePlayHandle*)*it);
+				NotePlayHandleManager::release(static_cast<NotePlayHandle*>(*it));
 			}
-			else delete *it;
+			else
+			{
+				m_deferredDeletes.push_back(*it);
+			}
 			it = m_playHandles.erase(it);
 		}
 		else
@@ -292,46 +318,72 @@ void AudioEngine::renderStageEffects()
 			++it;
 		}
 	}
+	return true;
 }
 
 
 
-void AudioEngine::renderStageMix()
+bool AudioEngine::renderStageMix()
 {
 	AudioEngineProfiler::Probe profilerProbe(m_profiler, AudioEngineProfiler::DetailType::Mixing);
 
 	Mixer *mixer = Engine::mixer();
-	mixer->masterMix(m_outputBufferWrite.get());
+	if (!mixer->masterMix(m_outputBufferWrite.get())) { return false; }
 
 	MixHelpers::multiply(m_outputBufferWrite.get(), m_masterGain, m_framesPerPeriod);
 
-	emit nextAudioBuffer(m_outputBufferRead.get());
+	// Publish the previous period, which is the buffer readers are allowed to copy.
+	// The raw pointer is not emitted: a queued slot could observe it after reuse.
+	m_displayBuffer.publish(m_outputBufferRead.get(), m_framesPerPeriod);
 
 	// and trigger LFOs
 	EnvelopeAndLfoParameters::instances()->trigger();
 	Controller::triggerFrameCounter();
 	AutomatableModel::incrementPeriodCounter();
+	return true;
+}
+
+std::span<const SampleFrame> AudioEngine::finishBlockedPeriod(bool alreadySwapped)
+{
+	m_profiler.noteWorkerStall();
+	if (!alreadySwapped)
+	{
+		zeroSampleFrames(m_outputBufferRead.get(), m_framesPerPeriod);
+	}
+	m_displayBuffer.publish(m_outputBufferRead.get(), m_framesPerPeriod);
+	s_renderingThread = false;
+	m_profiler.finishPeriod(outputSampleRate(), m_framesPerPeriod);
+	m_outputBufferReadIndex = 0;
+	return {m_outputBufferRead.get(), static_cast<size_t>(m_framesPerPeriod)};
 }
 
 
 
 std::span<const SampleFrame> AudioEngine::renderNextPeriod()
 {
+	m_profiler.beginLockWait();
 	const auto lock = std::lock_guard{m_changeMutex};
+	m_profiler.endLockWait();
 
 	m_profiler.startPeriod();
 	s_renderingThread = true;
 
+	if (AudioEngineWorkerThread::batchInFlight())
+	{
+		return finishBlockedPeriod(false);
+	}
+
 	renderStageNoteSetup();     // STAGE 0: clear old play handles and buffers, setup new play handles
-	renderStageInstruments();   // STAGE 1: run and render all play handles
-	renderStageEffects();       // STAGE 2: process effects of all instrument- and sampletracks
-	renderStageMix();           // STAGE 3: do master mix in mixer
+	if (!renderStageInstruments() || !renderStageEffects() || !renderStageMix())
+	{
+		return finishBlockedPeriod(true);
+	}
 
 	s_renderingThread = false;
 	m_profiler.finishPeriod(outputSampleRate(), m_framesPerPeriod);
 	m_outputBufferReadIndex = 0;
 
-	return {m_outputBufferRead.get(), m_framesPerPeriod};
+	return {m_outputBufferRead.get(), static_cast<size_t>(m_framesPerPeriod)};
 }
 
 void AudioEngine::swapBuffers()
