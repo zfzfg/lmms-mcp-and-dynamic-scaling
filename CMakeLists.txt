@@ -21,6 +21,7 @@ enable_policy_if_exists(CMP0092) # MSVC warning flags are not in CMAKE_<LANG>_FL
 enable_policy_if_exists(CMP0141) # MSVC debug information format flags are selected by an abstraction.
 
 PROJECT(lmms)
+INCLUDE(CTest)
 
 SET(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules" ${CMAKE_MODULE_PATH})
 SET(LMMS_BINARY_DIR ${CMAKE_BINARY_DIR})

@@ -89,6 +89,7 @@ endforeach()
 if(WIN32)
 	add_library(lmms_missing_dep SHARED runtime/missing_dep.cpp)
 	add_executable(lmms_missing_dll_child runtime/missing_child.cpp)
+	target_compile_features(lmms_missing_dll_child PRIVATE cxx_std_17)
 	target_link_libraries(lmms_missing_dll_child PRIVATE lmms_missing_dep)
 	file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/loader-paths/$<CONFIG>/loader_paths.h" CONTENT
 		"#define LMMS_LAUNCHER_PATH R\"($<TARGET_FILE:lmms_test_launcher>)\"\n#define LMMS_CHILD_PATH R\"($<TARGET_FILE:lmms_missing_dll_child>)\"\n#define LMMS_DEP_DLL R\"($<TARGET_FILE:lmms_missing_dep>)\"\n")
