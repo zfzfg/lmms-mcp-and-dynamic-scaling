@@ -71,7 +71,7 @@ public:
 	QString nameWithExtension( const QString& fn ) const;
 
 	void write( QTextStream& strm );
-	bool writeFile(const QString& fn, bool withResources = false);
+	bool writeFile(const QString& fn, bool withResources = false, bool showErrors = true);
 
 	//! @brief Copies resources to @p resourcesDir and changes the
 	//! DataFile to use local paths to them
@@ -88,6 +88,7 @@ public:
 	//! it will use the root element as the parent.
 	bool hasLocalPlugins(QDomElement parent = QDomElement(), bool firstCall = true) const;
 
+	const QDomElement& content() const { return m_content; }
 	QDomElement& content()
 	{
 		return m_content;

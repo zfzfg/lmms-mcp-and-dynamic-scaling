@@ -24,21 +24,24 @@
 
 #include "GuiApplication.h"
 
-#include "lmmsversion.h"
-
-#include "LmmsStyle.h"
-#include "LmmsPalette.h"
-
 #include "AutomationEditor.h"
 #include "ConfigManager.h"
 #include "ControllerRackView.h"
-#include "MixerView.h"
+#include "LmmsPalette.h"
+#include "LmmsStyle.h"
 #include "MainWindow.h"
 #include "MicrotunerConfig.h"
+#include "MixerView.h"
 #include "PatternEditor.h"
 #include "PianoRoll.h"
 #include "ProjectNotes.h"
 #include "SongEditor.h"
+#include "lmmsconfig.h"
+#include "lmmsversion.h"
+
+#ifdef LMMS_HAVE_MCP
+#include "AiControlService.h"
+#endif
 
 #include <QApplication>
 #include <QDebug>
@@ -194,6 +197,7 @@ GuiApplication::GuiApplication()
 
 	splashScreen.finish(m_mainWindow);
 	m_mainWindow->finalize();
+
 
 	m_loadingProgressLabel = nullptr;
 }

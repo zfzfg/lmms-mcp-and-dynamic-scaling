@@ -62,6 +62,7 @@ public:
 	ProjectRenderer(const OutputSettings& _os, ExportFileFormat _file_format, const QString& _out_file);
 	~ProjectRenderer() override = default;
 
+	bool succeeded() const { return m_succeeded; }
 	bool isReady() const
 	{
 		return m_fileDev != nullptr;
@@ -92,7 +93,7 @@ private:
 
 	volatile int m_progress;
 	volatile bool m_abort;
-
+	bool m_succeeded{false};
 } ;
 
 

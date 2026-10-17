@@ -52,7 +52,10 @@ public:
 	//! Write `size` sample frames from `buf` into the output file.
 	virtual void writeBuffer(const SampleFrame* buf, const f_cnt_t frames) = 0;
 
+	virtual bool finalize() { return !m_writeError; }
+
 protected:
+	bool m_writeError{false};
 	int writeData( const void* data, int len );
 
 	inline bool outputFileOpened() const

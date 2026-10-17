@@ -51,6 +51,7 @@ public:
 	void renderTracks();
 
 	void abortProcessing();
+	bool succeeded() const { return m_succeeded; }
 
 signals:
 	void progressChanged( int );
@@ -61,6 +62,7 @@ private slots:
 	void updateConsoleProgress();
 
 private:
+	bool m_succeeded{true};
 	QString pathForTrack( const Track *track, int num );
 	void restoreMutedState();
 

@@ -1,0 +1,1829 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "contractVersion": "1.0",
+  "definitions": {
+    "lmms_get_status": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "instanceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "capabilities": {
+          "type": "object"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "instanceId",
+              "ready",
+              "permissions",
+              "capabilities"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_get_project": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projectRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "projectRevision": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "modified": {
+              "type": "boolean"
+            },
+            "tempoBpm": {
+              "type": "integer"
+            },
+            "timeSignature": {
+              "type": "object",
+              "properties": {
+                "numerator": {
+                  "type": "integer"
+                },
+                "denominator": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "numerator",
+                "denominator"
+              ],
+              "additionalProperties": true
+            },
+            "ticksPerQuarter": {
+              "type": "integer"
+            },
+            "ticksPerBar": {
+              "type": "integer"
+            },
+            "lengthTicks": {
+              "type": "integer"
+            },
+            "playMode": {
+              "type": "string"
+            },
+            "isPlaying": {
+              "type": "boolean"
+            },
+            "isPaused": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "projectId",
+            "projectRevision",
+            "name",
+            "modified",
+            "tempoBpm",
+            "timeSignature",
+            "ticksPerQuarter",
+            "ticksPerBar",
+            "lengthTicks",
+            "playMode",
+            "isPlaying",
+            "isPaused"
+          ],
+          "additionalProperties": true
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "projectId",
+              "projectRevision",
+              "data"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_list_tracks": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "trackId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "container": {
+                "type": "string"
+              },
+              "muted": {
+                "type": "boolean"
+              },
+              "solo": {
+                "type": "boolean"
+              },
+              "volume": {
+                "type": "number"
+              },
+              "panning": {
+                "type": "number"
+              },
+              "clipCount": {
+                "type": "integer"
+              },
+              "mixerChannel": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "trackId",
+              "name",
+              "type",
+              "container",
+              "muted",
+              "solo",
+              "volume",
+              "panning",
+              "clipCount",
+              "mixerChannel"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "items"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_list_clips": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "clipId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "trackId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "positionTicks": {
+                "type": "integer"
+              },
+              "lengthTicks": {
+                "type": "integer"
+              },
+              "muted": {
+                "type": "boolean"
+              },
+              "noteCount": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "clipId",
+              "trackId",
+              "type",
+              "name",
+              "positionTicks",
+              "lengthTicks",
+              "muted",
+              "noteCount"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "items"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_get_notes": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "clipId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clipRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "positionTicks",
+              "lengthTicks",
+              "midiKey"
+            ],
+            "additionalProperties": true,
+            "properties": {
+              "noteRef": {
+                "type": "string",
+                "minLength": 1
+              },
+              "positionTicks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647
+              },
+              "lengthTicks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2147483647
+              },
+              "midiKey": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 127
+              },
+              "volumePercent": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 200
+              },
+              "pan": {
+                "type": "integer",
+                "minimum": -100,
+                "maximum": 100
+              },
+              "noteType": {
+                "enum": [
+                  "regular",
+                  "step"
+                ]
+              }
+            }
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "clipId",
+              "clipRevision",
+              "notes"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_list_parameters": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "parameterId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ownerId": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              },
+              "minValue": {
+                "type": "number"
+              },
+              "maxValue": {
+                "type": "number"
+              },
+              "step": {
+                "type": "number"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "isAutomated": {
+                "type": "boolean"
+              },
+              "isWritable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "parameterId",
+              "ownerId",
+              "key",
+              "displayName",
+              "value",
+              "minValue",
+              "maxValue",
+              "step",
+              "unit",
+              "isAutomated",
+              "isWritable"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "parameters"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_list_instruments": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "instruments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "isInternal": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "name",
+              "isInternal",
+              "status"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "instruments"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_get_mixer": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channelId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "channelIndex": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "muted": {
+                "type": "boolean"
+              },
+              "solo": {
+                "type": "boolean"
+              },
+              "volume": {
+                "type": "number"
+              },
+              "isMaster": {
+                "type": "boolean"
+              },
+              "sends": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "targetChannelIndex": {
+                      "type": "integer"
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "targetChannelIndex",
+                    "amount"
+                  ],
+                  "additionalProperties": true
+                }
+              }
+            },
+            "required": [
+              "channelId",
+              "channelIndex",
+              "name",
+              "muted",
+              "solo",
+              "volume",
+              "isMaster",
+              "sends"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "channels"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_preview_changes": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "plan": {
+          "type": "object",
+          "properties": {
+            "planId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "projectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expectedRevision": {
+              "type": "integer"
+            },
+            "planHash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expiresAt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "summary": {
+              "type": "string"
+            },
+            "operationsCount": {
+              "type": "integer"
+            },
+            "affectedObjects": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "planId",
+            "projectId",
+            "expectedRevision",
+            "planHash",
+            "expiresAt",
+            "summary",
+            "operationsCount",
+            "affectedObjects"
+          ],
+          "additionalProperties": true
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "plan"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_apply_changes": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "projectId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projectRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "committed",
+                "unchanged"
+              ]
+            },
+            "createdObjects": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "addedNotes": {
+              "type": "integer"
+            },
+            "undoGroupId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "createdObjects",
+            "addedNotes",
+            "undoGroupId"
+          ],
+          "additionalProperties": true
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "projectId",
+              "projectRevision",
+              "data"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_set_transport": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "isPlaying": {
+          "type": "boolean"
+        },
+        "positionTicks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "action",
+              "isPlaying",
+              "positionTicks"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_undo": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "newRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "newRevision"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_redo": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "newRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "newRevision"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_get_operation": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "data": {
+          "type": "object"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "data"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_create_instrument_track": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "trackId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "newRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "trackId",
+              "newRevision"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_load_asset": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "newRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "newRevision"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_save_project_copy": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "savedPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projectRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "savedPath",
+              "projectRevision"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_start_render": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "jobId"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_get_job": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "job": {
+          "type": "object",
+          "properties": {
+            "jobId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "queued",
+                "preparing_snapshot",
+                "running",
+                "validating",
+                "succeeded",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "progress": {
+              "type": "number"
+            },
+            "projectRevision": {
+              "type": "integer"
+            },
+            "sha256": {
+              "type": "string"
+            },
+            "sizeBytes": {
+              "type": "integer"
+            },
+            "durationSeconds": {
+              "type": "number"
+            },
+            "sampleRate": {
+              "type": "integer"
+            },
+            "bitDepth": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "jobId",
+            "type",
+            "state",
+            "progress",
+            "projectRevision",
+            "sha256",
+            "sizeBytes",
+            "durationSeconds",
+            "sampleRate",
+            "bitDepth"
+          ],
+          "additionalProperties": true
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "job"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_cancel_job": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "jobId"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_list_assets": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "assetId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string"
+              },
+              "rootId": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "sample",
+                  "preset"
+                ]
+              }
+            },
+            "required": [
+              "assetId",
+              "name",
+              "rootId",
+              "type"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "items"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    },
+    "lmms_get_automation": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "clipId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "positionTicks": {
+                "type": "integer"
+              },
+              "value": {
+                "type": "number"
+              },
+              "outValue": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "positionTicks",
+              "value",
+              "outValue"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "parameterIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "interpolation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "clipId",
+              "points",
+              "parameterIds",
+              "interpolation"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

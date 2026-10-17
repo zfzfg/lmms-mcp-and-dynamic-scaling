@@ -128,6 +128,36 @@ set(LMMS_SRCS
 	core/midi/MidiApple.cpp
 	core/midi/MidiPort.cpp
 	core/midi/MidiWinMM.cpp
+)
 
+if(WANT_MCP)
+	set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/doc/mcp/schemas/mcp-commands.schema.json")
+	file(READ "${CMAKE_SOURCE_DIR}/doc/mcp/schemas/mcp-commands.schema.json" MCP_COMMAND_SCHEMA)
+	set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/doc/mcp/schemas/mcp-tools-input.schema.json")
+	file(READ "${CMAKE_SOURCE_DIR}/doc/mcp/schemas/mcp-tools-input.schema.json" MCP_TOOL_INPUT_SCHEMA)
+	configure_file("ai/mcp_command_schema.h.in" "${CMAKE_BINARY_DIR}/mcp_command_schema.h" @ONLY)
+	set(LMMS_SRCS
+		${LMMS_SRCS}
+		core/ai/AiSchemaValidator.cpp
+		core/ai/AiWavFile.cpp
+		core/ai/AiDomainTypes.cpp
+		core/ai/AiObjectRegistry.cpp
+		core/ai/AiProjectRevision.cpp
+		core/ai/AiFilePolicy.cpp
+		core/ai/AiCommandDispatcher.cpp
+		core/ai/AiChangePlan.cpp
+		core/ai/AiParameterRegistry.cpp
+		core/ai/AiProjectSnapshot.cpp
+		core/ai/AiSnapshotResources.cpp
+		core/ai/AiJobManager.cpp
+		core/ai/AiEditTransaction.cpp
+		core/ai/AiApplicationFacade.cpp
+		core/ai/AiLocalServer.cpp
+		core/ai/AiControlService.cpp
+	)
+endif()
+
+set(LMMS_SRCS
+	${LMMS_SRCS}
 	PARENT_SCOPE
 )

@@ -1,0 +1,3 @@
+interface:
+  display_name: "LMMS Mixing and Automation"
+  short_description: "Control LMMS mixer routing and automation"

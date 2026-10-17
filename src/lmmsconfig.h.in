@@ -36,6 +36,7 @@
 #cmakedefine LMMS_HAVE_VST_64
 #cmakedefine LMMS_HAVE_SF_COMPLEVEL
 #cmakedefine LMMS_HAVE_WINMM
+#cmakedefine LMMS_HAVE_MCP
 
 #cmakedefine LMMS_DEBUG_FPE
 

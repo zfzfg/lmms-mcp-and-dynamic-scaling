@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LmmsMcpDomainProtocol",
+  "description": "JSON-RPC schema for internal LMMS MCP IPC framing and messages",
+  "definitions": {
+    "HandshakeRequest": {
+      "type": "object",
+      "required": ["clientVersion", "ipcProtocolVersion", "instanceId", "authToken"],
+      "properties": {
+        "clientVersion": { "type": "string" },
+        "ipcProtocolVersion": { "type": "string" },
+        "instanceId": { "type": "string" },
+        "authToken": { "type": "string" }
+      }
+    },
+    "HandshakeResult": {
+      "type": "object",
+      "required": ["ok", "instanceId", "bridgeVersion", "permissions", "ready"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "instanceId": { "type": "string" },
+        "bridgeVersion": { "type": "string" },
+        "permissions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ready": { "type": "boolean" }
+      }
+    },
+    "DomainCallRequest": {
+      "type": "object",
+      "required": ["action", "payload"],
+      "properties": {
+        "action": { "type": "string" },
+        "deadlineMs": { "type": "integer", "minimum": 1 },
+        "operationKey": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "DomainCallResponse": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "instanceId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "projectRevision": { "type": "integer", "minimum": 0 },
+        "data": { "type": "object" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" },
+            "retryable": { "type": "boolean" },
+            "details": { "type": "object" }
+          }
+        }
+      }
+    }
+  }
+}

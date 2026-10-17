@@ -129,7 +129,18 @@ SET(LMMS_SRCS
 	gui/widgets/TextFloat.cpp
 	gui/widgets/TimeDisplayWidget.cpp
 	gui/widgets/ToolButton.cpp
+)
 
+if(WANT_MCP)
+	set(LMMS_SRCS
+		${LMMS_SRCS}
+		gui/modals/AiConnectionDialog.cpp
+		gui/widgets/AiControlStatus.cpp
+	)
+endif()
+
+set(LMMS_SRCS
+	${LMMS_SRCS}
 	PARENT_SCOPE
 )
 

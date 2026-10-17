@@ -27,10 +27,10 @@
 
 #include <QHash>
 #include <QStack>
+#include <optional>
 
-#include "LmmsTypes.h"
 #include "DataFile.h"
-
+#include "LmmsTypes.h"
 
 namespace lmms
 {
@@ -55,6 +55,7 @@ public:
 	bool canRedo() const;
 
 	void addJournalCheckPoint( JournallingObject *jo );
+	static void saveJournalScope(JournallingObject* object, DataFile& data, bool normalized);
 
 	bool isJournalling() const
 	{
@@ -99,6 +100,39 @@ public:
 	}
 
 
+	void beginJournalGroup( const QString & name = QString(), const QString & groupId = QString() );
+	void endJournalGroup();
+	void cancelJournalGroup();
+	void discardJournalGroup() { m_openGroup = std::nullopt; }
+	bool isGroupOpen() const { return m_openGroup.has_value(); }
+	QString currentUndoGroupId() const;
+	QString currentRedoGroupId() const;
+
+	class GroupGuard
+	{
+	public:
+		GroupGuard( ProjectJournal * pj, const QString & name = QString(), const QString & groupId = QString() )
+			: m_pj( pj )
+		{
+			if( m_pj ) { m_pj->beginJournalGroup( name, groupId ); }
+		}
+		~GroupGuard()
+		{
+			if( m_pj && !m_committed ) { m_pj->cancelJournalGroup(); }
+		}
+		void commit()
+		{
+			if( m_pj && !m_committed )
+			{
+				m_pj->endJournalGroup();
+				m_committed = true;
+			}
+		}
+	private:
+		ProjectJournal * m_pj;
+		bool m_committed{false};
+	};
+
 private:
 	using JoIdMap = QHash<jo_id_t, JournallingObject*>;
 
@@ -112,12 +146,25 @@ private:
 		jo_id_t joID;
 		DataFile data;
 	} ;
-	using CheckPointStack = QStack<CheckPoint>;
+
+	struct JournalEntry
+	{
+		qint64 bytes{0};
+		bool normalized{false};
+		QString name;
+		QString groupId;
+		QVector<CheckPoint> checkpoints;
+	};
+
+	void enforceMemoryBudget();
+	using EntryStack = QStack<JournalEntry>;
 
 	JoIdMap m_joIDs;
 
-	CheckPointStack m_undoCheckPoints;
-	CheckPointStack m_redoCheckPoints;
+	EntryStack m_undoEntries;
+	EntryStack m_redoEntries;
+
+	std::optional<JournalEntry> m_openGroup;
 
 	bool m_journalling;
 

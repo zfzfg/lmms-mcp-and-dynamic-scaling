@@ -252,7 +252,7 @@ public:
 	void loadProject( const QString & filename );
 	bool guiSaveProject();
 	bool guiSaveProjectAs(const QString & filename);
-	bool saveProjectFile(const QString & filename, bool withResources = false);
+	bool saveProjectFile(const QString& filename, bool withResources = false, bool showErrors = true);
 
 	const QString & projectFileName() const
 	{
@@ -342,6 +342,7 @@ public slots:
 
 
 	void setModified();
+	void setModified(bool value);
 
 	void clearProject();
 
@@ -400,7 +401,6 @@ private:
 	void processAutomations(const TrackList& tracks, TimePos timeStart, f_cnt_t frames);
 	void processMetronome(size_t bufferOffset);
 
-	void setModified(bool value);
 
 	void setProjectFileName(QString const & projectFileName);
 

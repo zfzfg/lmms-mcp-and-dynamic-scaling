@@ -1,0 +1,3 @@
+interface:
+  display_name: "LMMS Render and Export"
+  short_description: "Save project copies and render verified WAV audio"

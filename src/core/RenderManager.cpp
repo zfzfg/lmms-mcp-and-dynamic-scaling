@@ -61,6 +61,7 @@ void RenderManager::abortProcessing()
 // Called to render each new track when rendering tracks individually.
 void RenderManager::renderNextTrack()
 {
+	if (m_activeRenderer && !m_activeRenderer->succeeded()) { m_succeeded = false; }
 	m_activeRenderer.reset();
 
 	if (m_tracksToRender.empty())
@@ -151,6 +152,7 @@ void RenderManager::render(QString outputPath)
 	}
 	else
 	{
+		m_succeeded = false;
 		qDebug( "Renderer failed to acquire a file device!" );
 		renderNextTrack();
 	}

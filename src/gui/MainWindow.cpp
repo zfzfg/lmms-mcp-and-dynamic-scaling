@@ -24,6 +24,11 @@
 
 #include "MainWindow.h"
 
+#include "lmmsconfig.h"
+#ifdef LMMS_HAVE_MCP
+#include "AiControlStatus.h"
+#endif
+
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDesktopServices>
@@ -202,6 +207,9 @@ MainWindow::MainWindow() :
 
 	vbox->addWidget( m_toolBar );
 	vbox->addWidget( w );
+#ifdef LMMS_HAVE_MCP
+	vbox->addWidget(new AiControlStatus(main_widget));
+#endif
 	setCentralWidget( main_widget );
 
 	m_updateTimer.start( 1000 / 60, this );  // 60 fps
