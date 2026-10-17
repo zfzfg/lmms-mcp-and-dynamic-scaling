@@ -26,6 +26,7 @@
 
 #include "LcdFloatSpinBox.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <QHBoxLayout>
@@ -39,6 +40,7 @@
 
 #include "CaptionMenu.h"
 #include "DeprecationHelper.h"
+#include "DpiContext.h"
 #include "embed.h"
 #include "GuiApplication.h"
 #include "FontHelper.h"
@@ -89,8 +91,23 @@ void LcdFloatSpinBox::layoutSetup(const QString &style)
 	lcdLayout->addWidget(&m_wholeDisplay);
 
 	auto dotLabel = new QLabel("", this);
-	QPixmap dotPixmap(embed::getIconPixmap(QString("lcd_" + style + "_dot").toUtf8().constData()));
-	dotLabel->setPixmap(dotPixmap.copy(0, 0, dotPixmap.size().width(), dotPixmap.size().height() / 2));
+	const auto dotSource = embed::getIconResource(QString("lcd_" + style + "_dot").toStdString());
+	Dpi::watch(dotLabel, [dotLabel, dotSource] {
+		const qreal dpr = Dpi::effectiveDevicePixelRatio(dotLabel);
+		const auto resource = dotSource.atDpr(dpr);
+		const QSize size(dotSource.logicalSize.width(), dotSource.logicalSize.height() / 2);
+		QPixmap dot(Dpi::rasterSizeFor(size, dpr));
+		dot.setDevicePixelRatio(dpr);
+		dot.fill(Qt::transparent);
+		{
+			QPainter painter(&dot);
+			const qreal rowHeight = resource.pixmap.height() / 2.0;
+			painter.drawPixmap(QRect(QPoint(), size), resource.pixmap,
+				QRectF(0, dotLabel->isEnabled() ? 0 : rowHeight, resource.pixmap.width(), rowHeight));
+		}
+		dotLabel->setFixedSize(size);
+		dotLabel->setPixmap(dot);
+	});
 	lcdLayout->addWidget(dotLabel);
 
 	lcdLayout->addWidget(&m_fractionDisplay);
@@ -105,7 +122,7 @@ void LcdFloatSpinBox::layoutSetup(const QString &style)
 	outerLayout->setContentsMargins(0, 0, 0, 0);
 	outerLayout->setSizeConstraint(QLayout::SetFixedSize);
 	this->setLayout(outerLayout);
-	this->setFixedHeight(32);
+	this->setMinimumHeight(std::max(32, outerLayout->sizeHint().height()));
 }
 
 

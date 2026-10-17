@@ -226,6 +226,8 @@ Error: 07_MismatchingEndifName.h:36: Missing comment // ABC_H
 Error: 08_MismatchingNamespaceEndName.h:5: Missing comment // namespace lmms
 ''')
 
+	# Windows cannot remove a temporary directory while it is the working directory.
+	os.chdir(lmms_main_path)
 
 # if we made it until here without an exception, all tests have been passed
 print("SUCCESS")

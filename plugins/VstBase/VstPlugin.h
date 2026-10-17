@@ -150,12 +150,18 @@ private:
 	QByteArray saveChunk();
 
 	void toggleEditorVisibility(int visible = -1);
+	void applyEditorGeometry();
+	void useSeparateEditor(const char* reason);
+	auto createEditorContainer(QWidget* parent) -> QWidget*;
+#ifdef LMMS_BUILD_WIN32
+	auto createWin32Container(QWidget* parent) -> QWidget*;
+#endif // LMMS_BUILD_WIN32
 
 	QString m_plugin;
 	QPointer<QWidget> m_pluginWidget;
 	int m_pluginWindowID;
 	QSize m_pluginGeometry;
-	const QString m_embedMethod;
+	QString m_embedMethod;
 
 	QString m_name;
 	int m_version;

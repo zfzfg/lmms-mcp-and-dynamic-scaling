@@ -135,6 +135,10 @@ if(WANT_MCP)
 	file(READ "${CMAKE_SOURCE_DIR}/doc/mcp/schemas/mcp-commands.schema.json" MCP_COMMAND_SCHEMA)
 	set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/doc/mcp/schemas/mcp-tools-input.schema.json")
 	file(READ "${CMAKE_SOURCE_DIR}/doc/mcp/schemas/mcp-tools-input.schema.json" MCP_TOOL_INPUT_SCHEMA)
+	# Keep each raw string literal below MSVC's per-literal size limit.
+	foreach(schema_variable MCP_COMMAND_SCHEMA MCP_TOOL_INPUT_SCHEMA)
+		string(REPLACE "\n" "\n)LMMSMCP\"\nR\"LMMSMCP(" ${schema_variable} "${${schema_variable}}")
+	endforeach()
 	configure_file("ai/mcp_command_schema.h.in" "${CMAKE_BINARY_DIR}/mcp_command_schema.h" @ONLY)
 	set(LMMS_SRCS
 		${LMMS_SRCS}

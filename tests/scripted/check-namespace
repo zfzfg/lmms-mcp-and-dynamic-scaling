@@ -61,6 +61,8 @@ result = subprocess.run(['git', 'ls-files', '*.[ch]', '*.[ch]pp', ':!tests/*'],
 known_no_namespace_lmms = {
     # main.cpp
     'src/core/main.cpp',
+    # Standalone MCP runtime entry point
+    'tools/mcp/packaging/launcher.cpp',
     # nothing to set under a namespace
     'include/debug.h',
     'include/versioninfo.h',

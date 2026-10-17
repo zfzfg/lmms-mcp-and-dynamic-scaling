@@ -23,6 +23,7 @@
  */
 
 #include "GuiApplication.h"
+#include "DpiContext.h"
 
 #include "AutomationEditor.h"
 #include "ConfigManager.h"
@@ -125,7 +126,10 @@ GuiApplication::GuiApplication()
 
 	// Show splash screen
 	QSplashScreen splashScreen( embed::getIconPixmap( "splash" ) );
-	splashScreen.setFixedSize(splashScreen.pixmap().size());
+	splashScreen.setFixedSize(embed::logicalSize(splashScreen.pixmap()));
+	Dpi::watch(&splashScreen, [&splashScreen, source = embed::describePixmap(splashScreen.pixmap())] {
+		splashScreen.setPixmap(source.atDpr(Dpi::effectiveDevicePixelRatio(&splashScreen)).pixmap);
+	});
 	splashScreen.show();
 
 	QHBoxLayout layout;

@@ -29,10 +29,12 @@
 #include <QMenu>
 #include <QPainter>
 
+#include <cmath>
 #include "AutomationClip.h"
 #include "Clipboard.h"
 #include "DataFile.h"
 #include "DeprecationHelper.h"
+#include "DpiContext.h"
 #include "Engine.h"
 #include "GuiApplication.h"
 #include "PatternEditor.h"
@@ -68,6 +70,7 @@ TrackContentWidget::TrackContentWidget( TrackView * parent ) :
 	m_embossWidth(0),
 	m_embossOffset(0)
 {
+	Dpi::watch(this, [this] { m_cachedDpr = 0; });
 	setAcceptDrops( true );
 
 	// Update background if snap size changes
@@ -112,7 +115,10 @@ void TrackContentWidget::updateBackground()
 
 	int w = ppb * BARS_PER_GROUP;
 	int h = height();
-	m_background = QPixmap( w * 2, height() );
+	m_cachedDpr = Dpi::effectiveDevicePixelRatio(this);
+	const QSize physSize = Dpi::rasterSizeFor(QSize(w * 2, h), m_cachedDpr);
+	m_background = QPixmap( physSize );
+	m_background.setDevicePixelRatio( m_cachedDpr );
 	QPainter pmp( &m_background );
 
 	pmp.fillRect( 0, 0, w, h, darkerColor() );
@@ -544,12 +550,29 @@ void TrackContentWidget::paintEvent( QPaintEvent * pe )
 	// Assume even-pixels-per-bar. Makes sense, should be like this anyways
 	const TrackContainerView * tcv = m_trackView->trackContainerView();
 	int ppb = static_cast<int>( tcv->pixelsPerBar() );
+	const qreal currentDpr = Dpi::effectiveDevicePixelRatio(this);
+	if (!qFuzzyCompare(m_cachedDpr, currentDpr))
+	{
+		updateBackground();
+	}
 	QPainter p( this );
 	// Don't draw background on Pattern Editor
 	if (m_trackView->trackContainerView() != getGUI()->patternEditor()->m_editor)
 	{
-		p.drawTiledPixmap(rect(), m_background, QPoint(
-				tcv->currentPosition().getTicks() * ppb / TimePos::ticksPerBar(), 0));
+		const int tileWidth = ppb * BARS_PER_GROUP * 2;
+		if (tileWidth > 0)
+		{
+			const int offset = tcv->currentPosition().getTicks() * ppb / TimePos::ticksPerBar();
+			const int firstX = -((offset % tileWidth + tileWidth) % tileWidth);
+			const qreal dpr = m_background.devicePixelRatio();
+			// Crop any ceil-rounded padding instead of deriving the musical grid period
+			// from physicalWidth / DPR (which can be fractional).
+			const QRectF source(0, 0, tileWidth * dpr, height() * dpr);
+			for (int x = firstX; x < width(); x += tileWidth)
+			{
+				p.drawPixmap(QRectF(x, 0, tileWidth, height()), m_background, source);
+			}
+		}
 	}
 }
 
@@ -600,7 +623,7 @@ void TrackContentWidget::contextMenuEvent( QContextMenuEvent * cme )
 	}
 
 	QMenu contextMenu( this );
-	QAction *pasteA = contextMenu.addAction( embed::getIconPixmap( "edit_paste" ),
+	QAction *pasteA = contextMenu.addAction( embed::getIcon("edit_paste"),
 					tr( "Paste" ), [this, cme](){ contextMenuAction( cme, ContextMenuAction::Paste ); } );
 	// If we can't paste in the current TCW for some reason, disable the action so the user knows
 	pasteA->setEnabled( canPasteSelection( getPosition( cme->x() ), getMimeData() ) ? true : false );

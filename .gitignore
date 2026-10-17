@@ -16,3 +16,5 @@ compile_commands.json
 .vs/
 tools/mcp/node_modules/
 tools/mcp/dist/
+# CocoIndex Code (ccc)
+/.cocoindex_code/

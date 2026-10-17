@@ -28,6 +28,7 @@
 #include <QMenu>
 #include <QPainter>
 
+#include "DpiContext.h"
 #include "Engine.h"
 #include "GuiApplication.h"
 #include "MainWindow.h"
@@ -48,6 +49,7 @@ PatternClipView::PatternClipView(Clip* _clip, TrackView* _tv) :
 	m_patternClip(dynamic_cast<PatternClip*>(_clip)),
 	m_paintPixmap()
 {
+	Dpi::watch(this, [this] { setNeedsUpdate(true); });
 	connect( _clip->getTrack(), SIGNAL(dataChanged()), 
 			this, SLOT(update()));
 	connect(Engine::patternStore(), &TrackContainer::trackAdded,
@@ -68,9 +70,9 @@ void PatternClipView::constructContextMenu(QMenu* _cm)
 			this, SLOT(openInPatternEditor()));
 	_cm->insertSeparator( _cm->actions()[1] );
 	_cm->addSeparator();
-	_cm->addAction( embed::getIconPixmap( "reload" ), tr( "Reset name" ),
+	_cm->addAction( embed::getIcon("reload"), tr( "Reset name" ),
 						this, SLOT(resetName()));
-	_cm->addAction( embed::getIconPixmap( "edit_rename" ),
+	_cm->addAction( embed::getIcon("edit_rename"),
 						tr( "Change name" ),
 						this, SLOT(changeName()));
 }
@@ -92,6 +94,12 @@ void PatternClipView::paintEvent(QPaintEvent*)
 {
 	QPainter painter( this );
 
+	const qreal currentDpr = Dpi::effectiveDevicePixelRatio(this);
+	if (updateCachedDpr(currentDpr))
+	{
+		setNeedsUpdate(true);
+	}
+
 	if( !needsUpdate() )
 	{
 		painter.drawPixmap( 0, 0, m_paintPixmap );
@@ -100,9 +108,11 @@ void PatternClipView::paintEvent(QPaintEvent*)
 
 	setNeedsUpdate( false );
 
-	if (m_paintPixmap.isNull() || m_paintPixmap.size() != size())
+	const QSize physSize = Dpi::rasterSizeFor(size(), currentDpr);
+	if (m_paintPixmap.isNull() || m_paintPixmap.size() != physSize || !qFuzzyCompare(m_paintPixmap.devicePixelRatio(), currentDpr))
 	{
-		m_paintPixmap = QPixmap(size());
+		m_paintPixmap = QPixmap(physSize);
+		m_paintPixmap.setDevicePixelRatio(currentDpr);
 	}
 
 	QPainter p( &m_paintPixmap );

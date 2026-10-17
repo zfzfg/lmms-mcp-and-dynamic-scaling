@@ -199,6 +199,8 @@ private:
 						float _innerRadius = 1) const;
 
 	void drawKnob( QPainter * _p );
+	void drawStyledKnob(QPainter& painter, const QColor& baseColor);
+	void drawLegacyKnob(QPainter& painter);
 	void drawLabel(QPainter& p);
 	bool updateAngle();
 
@@ -216,7 +218,10 @@ private:
 
 	float m_totalAngle;
 	int m_angle;
+	QSize m_knobLogicalSize;
 	QImage m_cache;
+	qreal m_cachedDpr = 0.0;
+	QSize m_cachedSize;
 
 	// Styled knob stuff, could break out
 	QPointF m_centerPoint;

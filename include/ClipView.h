@@ -274,6 +274,14 @@ protected slots:
 	//! has changed the track view's length.
 	void updatePosition();
 
+protected:
+	bool updateCachedDpr(qreal dpr)
+	{
+		const bool changed = !qFuzzyCompare(m_cachedDpr, dpr);
+		m_cachedDpr = dpr;
+		return changed;
+	}
+
 private:
 	enum class Action
 	{
@@ -316,6 +324,7 @@ private:
 	QColor m_markerColor;
 
 	bool m_needsUpdate;
+	qreal m_cachedDpr = 0.0;
 	inline void setInitialPos( QPoint pos )
 	{
 		m_initialMousePos = pos;

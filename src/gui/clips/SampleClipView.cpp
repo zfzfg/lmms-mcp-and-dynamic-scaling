@@ -31,6 +31,7 @@
 #include "FileDialog.h"
 #include "GuiApplication.h"
 #include "AutomationEditor.h"
+#include "DpiContext.h"
 #include "embed.h"
 #include "PathUtil.h"
 #include "SampleClip.h"
@@ -50,6 +51,7 @@ SampleClipView::SampleClipView( SampleClip * _clip, TrackView * _tv ) :
 	m_paintPixmap(),
 	m_paintPixmapXPosition(0)
 {
+	Dpi::watch(this, [this] { setNeedsUpdate(true); });
 	// update UI and tooltip
 	updateSample();
 
@@ -83,19 +85,19 @@ void SampleClipView::constructContextMenu(QMenu* cm)
 {
 	cm->addSeparator();
 
-	/*contextMenu.addAction( embed::getIconPixmap( "record" ),
+	/*contextMenu.addAction( embed::getIcon("record"),
 				tr( "Set/clear record" ),
 						m_clip, SLOT(toggleRecord()));*/
 
 	cm->addAction(
-		embed::getIconPixmap("flip_x"),
+		embed::getIcon("flip_x"),
 		tr("Reverse sample"),
 		this,
 		SLOT(reverseSample())
 	);
 
 	cm->addAction(
-		embed::getIconPixmap("automation_ghost_note"),
+		embed::getIcon("automation_ghost_note"),
 		tr("Set as ghost in automation editor"),
 		this,
 		SLOT(setAutomationGhost())
@@ -210,6 +212,12 @@ void SampleClipView::paintEvent( QPaintEvent * pe )
 {
 	QPainter painter( this );
 
+	const qreal currentDpr = Dpi::effectiveDevicePixelRatio(this);
+	if (updateCachedDpr(currentDpr))
+	{
+		setNeedsUpdate(true);
+	}
+
 	if( !needsUpdate() )
 	{
 		painter.drawPixmap(m_paintPixmapXPosition, 0, m_paintPixmap);
@@ -225,13 +233,24 @@ void SampleClipView::paintEvent( QPaintEvent * pe )
 
 	m_paintPixmapXPosition = std::max(0, pe->rect().x() - trackViewWidth);
 
-	if (m_paintPixmap.isNull() || m_paintPixmap.size() != viewPortRect.size())
+	const QSize physSize = Dpi::rasterSizeFor(viewPortRect.size(), currentDpr);
+	if (m_paintPixmap.isNull() || m_paintPixmap.size() != physSize || !qFuzzyCompare(m_paintPixmap.devicePixelRatio(), currentDpr))
 	{
-		m_paintPixmap = QPixmap(viewPortRect.size());
+		m_paintPixmap = QPixmap(physSize);
+		m_paintPixmap.setDevicePixelRatio(currentDpr);
 	}
 
 	QPainter p( &m_paintPixmap );
 
+	const QColor background = paintBackground(p, painter);
+	paintSample(p, viewPortRect);
+	paintOverlay(p, background);
+	p.end();
+	painter.drawPixmap(m_paintPixmapXPosition, 0, m_paintPixmap);
+}
+
+auto SampleClipView::paintBackground(QPainter& p, const QPainter& painter) -> QColor
+{
 	bool muted = m_clip->getTrack()->isMuted() || m_clip->isMuted();
 	bool selected = isSelected();
 
@@ -270,6 +289,11 @@ void SampleClipView::paintEvent( QPaintEvent * pe )
 		p.setPen(p.pen().brush().color().darker(150));
 	}
 
+	return c;
+}
+
+void SampleClipView::paintSample(QPainter& p, const QRect& viewPortRect)
+{
 	const int spacing = BORDER_WIDTH + 1;
 	const float ppb = fixedClips() ?
 			( parentWidget()->width() - 2 * BORDER_WIDTH )
@@ -300,7 +324,10 @@ void SampleClipView::paintEvent( QPaintEvent * pe )
 
 	QString name = PathUtil::cleanName(m_clip->m_sample.sampleFile());
 	paintTextLabel(name, p);
+}
 
+void SampleClipView::paintOverlay(QPainter& p, const QColor& c)
+{
 	// disable antialiasing for borders, since its not needed
 	p.setRenderHint( QPainter::Antialiasing, false );
 
@@ -330,25 +357,8 @@ void SampleClipView::paintEvent( QPaintEvent * pe )
 		p.setPen(markerColor());
 		p.drawLine(m_markerPos, rect().bottom(), m_markerPos, rect().top());
 	}
-	// recording sample tracks is not possible at the moment
-
-	/* if( m_clip->isRecord() )
-	{
-		p.setFont( pointSize<7>( p.font() ) );
-
-		p.setPen( textShadowColor() );
-		p.drawText( 10, p.fontMetrics().height()+1, "Rec" );
-		p.setPen( textColor() );
-		p.drawText( 9, p.fontMetrics().height(), "Rec" );
-
-		p.setBrush( QBrush( textColor() ) );
-		p.drawEllipse( 4, 5, 4, 4 );
-	}*/
-
-	p.end();
-
-	painter.drawPixmap(m_paintPixmapXPosition, 0, m_paintPixmap);
 }
+
 
 
 

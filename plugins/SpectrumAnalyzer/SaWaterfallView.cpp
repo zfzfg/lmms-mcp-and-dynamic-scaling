@@ -149,13 +149,12 @@ void SaWaterfallView::paintEvent(QPaintEvent *event)
 							 m_processor->waterfallWidth(),		// width = number of frequency bins
 							 m_processor->waterfallHeight(),	// height = number of history lines
 							 QImage::Format_RGB32);
+		// The processor may reallocate its history after unlock. Keep a private snapshot
+		// while Qt maps the data image to the logical display rectangle.
+		const QImage frame = temp.copy();
 		lock.unlock();
-		temp.setDevicePixelRatio(devicePixelRatio());			// display at native resolution
-		painter.drawImage(m_displayLeft, m_displayTop,
-						  temp.scaled(m_displayWidth * devicePixelRatio(),
-									  m_displayHeight * devicePixelRatio(),
-									  Qt::IgnoreAspectRatio,
-									  Qt::SmoothTransformation));
+		painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+		painter.drawImage(QRect(m_displayLeft, m_displayTop, m_displayWidth, m_displayHeight), frame);
 		m_processor->flipRequest();
 	}
 	else
