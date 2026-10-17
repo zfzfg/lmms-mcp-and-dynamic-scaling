@@ -1,4 +1,6 @@
 #include "AiEditTransaction.h"
+#include "../../../src/core/ai/AiFacadeEdit.h"
+#include <stdexcept>
 
 #include <QtTest>
 
@@ -58,6 +60,57 @@ private slots:
 
 		QVERIFY(!res.ok);
 		QCOMPARE(res.error.code, ErrorCode::RevisionConflict);
+	}
+	void testFacadeRollback_data()
+	{
+		QTest::addColumn<bool>("throws");
+		QTest::addColumn<bool>("journalling");
+		QTest::addColumn<bool>("wholeSong");
+		for (bool throws : {false, true})
+			for (bool journalling : {false, true})
+				for (bool wholeSong : {false, true})
+					QTest::newRow(qPrintable(QString("throw%1-journal%2-song%3").arg(throws).arg(journalling).arg(wholeSong)))
+						<< throws << journalling << wholeSong;
+	}
+	void testFacadeRollback()
+	{
+		using namespace lmms;
+		using namespace lmms::ai;
+		QFETCH(bool, throws);
+		QFETCH(bool, journalling);
+		QFETCH(bool, wholeSong);
+		auto* song = Engine::getSong();
+		auto* journal = Engine::projectJournal();
+		auto* track = Track::create(Track::Type::Instrument, song);
+		track->setName("Original");
+		const auto handle = AiObjectRegistry::instance()->registerTrack(track);
+		const auto count = song->tracks().size();
+		const auto revision = AiProjectRevision::instance()->currentRevision();
+		const auto undo = journal->currentUndoGroupId();
+		const auto redo = journal->currentRedoGroupId();
+		song->setModified(false);
+		journal->setJournalling(journalling);
+		const auto result = runFacadeEdit(song, wholeSong ? static_cast<JournallingObject*>(song) : track,
+			"Failure test", "failure-group", [&]() -> QJsonObject {
+				if (wholeSong) { Track::create(Track::Type::Instrument, song); }
+				else { track->setName("Changed"); }
+				song->setModified();
+				if (throws) { throw std::runtime_error("injected loading failure"); }
+				return {{"ok", false}, {"error", DomainError{ErrorCode::PluginLoadFailed, "Injected failure"}.toJson()}};
+			});
+		QVERIFY(!result["ok"].toBool());
+		QCOMPARE(song->tracks().size(), count);
+		QCOMPARE(song->tracks().front()->name(), QString("Original"));
+		QCOMPARE(AiProjectRevision::instance()->currentRevision(), revision);
+		QVERIFY(!song->isModified());
+		QVERIFY(!journal->isGroupOpen());
+		QCOMPARE(journal->isJournalling(), journalling);
+		QCOMPARE(journal->currentUndoGroupId(), undo);
+		QCOMPARE(journal->currentRedoGroupId(), redo);
+		QVERIFY(!AiObjectRegistry::instance()->lookupTrack(handle));
+		journal->setJournalling(true);
+		AiProjectRevision::instance()->bumpRevision("verify edit scope closed");
+		QCOMPARE(AiProjectRevision::instance()->currentRevision(), revision + 1);
 	}
 
 	void testAtomicCommitAndUndo()

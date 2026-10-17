@@ -75,6 +75,8 @@ public:
 	} ;
 
 	DataFile( const QString& fileName );
+	// Automation callers report load errors without opening a modal dialog.
+	DataFile(const QString& fileName, bool showErrors);
 	DataFile( const QByteArray& data );
 	DataFile( Type type );
 
@@ -193,7 +195,7 @@ private:
 
 	void upgrade();
 
-	void loadData( const QByteArray & _data, const QString & _sourceFile );
+	void loadData(const QByteArray& data, const QString& sourceFile, bool showErrors = true);
 	bool acceptLoadedDocument(const QString& sourceFile);
 	FilePublishResult writeAtomic(const QString& finalPath, bool createBackup);
 	//! Parsed copy used by bundle export so a failed copy cannot retarget this document.

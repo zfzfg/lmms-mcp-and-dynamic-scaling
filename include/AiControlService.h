@@ -25,6 +25,7 @@ public:
 
 	bool isRunning() const { return m_running; }
 	bool isReady() const { return m_ready && m_listening; }
+	bool isPublished() const { return m_listening; }
 	void setReady(bool ready);
 	QString lastError() const { return m_lastError; }
 	QJsonArray diagnostics() const { return m_diagnostics; }
@@ -38,6 +39,9 @@ public:
 	uint64_t permissionGeneration() const { return m_permissionGeneration; }
 	Permission grantedPermissions() const { return static_cast<Permission>(m_permissions.load()); }
 	void setGrantedPermissions(Permission perms);
+
+signals:
+	void statusChanged();
 
 private:
 	AiControlService();
@@ -61,6 +65,7 @@ private:
 	// App-thread flag. Set for the whole shutdown so a timed-out stop is not repeated
 	// as a fresh one, and cleared only by a later successful start.
 	bool m_shuttingDown{false};
+	uint64_t m_serviceGeneration{0};
 	// Heap-allocated so a timed-out thread can be leaked instead of destroyed alive.
 	std::unique_ptr<QThread> m_ioThread;
 

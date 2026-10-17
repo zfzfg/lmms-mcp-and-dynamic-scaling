@@ -57,7 +57,13 @@ PatternTrackView::PatternTrackView(PatternTrack* pt, TrackContainerView* tcv) :
 
 PatternTrackView::~PatternTrackView()
 {
-	getGUI()->patternEditor()->m_editor->removeViewsForPattern(PatternTrack::s_infoMap[m_patternTrack]);
+	if (!model()) { return; }
+	// The model can already have removed its registration before destroying the view.
+	const auto pattern = PatternTrack::s_infoMap.constFind(m_patternTrack);
+	if (pattern != PatternTrack::s_infoMap.constEnd())
+	{
+		getGUI()->patternEditor()->m_editor->removeViewsForPattern(pattern.value());
+	}
 }
 
 
@@ -65,7 +71,11 @@ PatternTrackView::~PatternTrackView()
 
 bool PatternTrackView::close()
 {
-	getGUI()->patternEditor()->m_editor->removeViewsForPattern(PatternTrack::s_infoMap[m_patternTrack]);
+	const auto pattern = PatternTrack::s_infoMap.constFind(m_patternTrack);
+	if (model() && pattern != PatternTrack::s_infoMap.constEnd())
+	{
+		getGUI()->patternEditor()->m_editor->removeViewsForPattern(pattern.value());
+	}
 	return TrackView::close();
 }
 

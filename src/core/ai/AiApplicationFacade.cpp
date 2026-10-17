@@ -11,6 +11,7 @@
 #include "AiControlService.h"
 #include "AiEditTransaction.h"
 #include "AiFilePolicy.h"
+#include "AiFacadeEdit.h"
 #include "AiJobManager.h"
 #include "AiObjectRegistry.h"
 #include "AiParameterRegistry.h"
@@ -36,38 +37,6 @@ namespace lmms::ai {
 
 namespace {
 
-struct FacadeEditScope
-{
-	Song* song;
-	bool dirty;
-	bool active{true};
-	explicit FacadeEditScope(Song* value)
-		: song(value)
-		, dirty(value->isModified())
-	{
-		AiProjectRevision::instance()->beginEdit();
-	}
-	void finish(bool changed)
-	{
-		if (!active) { return; }
-		if (!changed) { song->setModified(dirty); }
-		AiProjectRevision::instance()->endEdit(changed);
-		active = false;
-	}
-	~FacadeEditScope() { finish(false); }
-};
-struct JournalPause
-{
-	ProjectJournal* journal;
-	bool previous;
-	explicit JournalPause(ProjectJournal* value)
-		: journal(value)
-		, previous(value->isJournalling())
-	{
-		journal->setJournalling(false);
-	}
-	~JournalPause() { journal->setJournalling(previous); }
-};
 QJsonObject failure(ErrorCode code, const QString& message)
 {
 	return {{"ok", false}, {"error", DomainError{code, message}.toJson()}};
@@ -162,7 +131,7 @@ QJsonObject AiApplicationFacade::getProject(const QString& optProjectId) const
 	ProjectSummary summary;
 	summary.projectId = projId;
 	summary.projectRevision = AiProjectRevision::instance()->currentRevision();
-	summary.name = song->projectFileName().isEmpty() ? "Unbenannt" : song->projectFileName();
+	summary.name = song->projectFileName().isEmpty() ? "Untitled" : song->projectFileName();
 	summary.modified = song->isModified();
 	summary.tempoBpm = song->getTempo();
 	summary.timeSigNumerator = song->getTimeSigModel().getNumerator();
@@ -225,7 +194,7 @@ QJsonObject AiApplicationFacade::listTracks(const QString& container, const QStr
 		if (auto it = dynamic_cast<InstrumentTrack*>(t))
 		{
 			ts.type = "instrument";
-			ts.instrumentKey = it->instrumentName();
+			ts.instrumentKey = it->instrument() ? QString::fromUtf8(it->instrument()->descriptor()->name) : QString();
 			ts.volume = it->volumeModel()->value();
 			ts.panning = it->panningModel()->value();
 			ts.mixerChannel = it->mixerChannelModel()->value();
@@ -790,46 +759,18 @@ QJsonObject AiApplicationFacade::createInstrumentTrack(const QString& pluginKey,
 		allowed |= entry.toObject()["key"].toString() == pluginKey;
 	}
 	if (!allowed) { return failure(ErrorCode::PluginUnavailable, "Instrument is not an available internal adapter."); }
-	auto* journal = Engine::projectJournal();
-	if (journal->isGroupOpen()) { return failure(ErrorCode::Busy, "Journal busy."); }
 	const QString undoGroup = "undo_" + QUuid::createUuid().toString(QUuid::WithoutBraces);
-	FacadeEditScope edit(song);
-	ProjectJournal::GroupGuard group(journal, "Create instrument track", undoGroup);
-	journal->addJournalCheckPoint(song);
-	JournalPause pause(journal);
-	Track* t = Track::create(Track::Type::Instrument, song);
-	auto it = dynamic_cast<InstrumentTrack*>(t);
-	if (!it)
-	{
-		res["ok"] = false;
-		res["error"] = DomainError{ErrorCode::InternalError, "Failed to instantiate InstrumentTrack."}.toJson();
-		journal->setJournalling(true);
-		journal->cancelJournalGroup();
-		edit.finish(false);
-		return res;
-	}
-
-	it->loadInstrument(pluginKey);
-	if (it->instrumentName() != pluginKey)
-	{
-		journal->setJournalling(true);
-		journal->cancelJournalGroup();
-		edit.finish(false);
-		return failure(ErrorCode::PluginLoadFailed, "Instrument did not load.");
-	}
-	if (!trackName.isEmpty()) { it->setName(trackName); }
-
-	QString handle = AiObjectRegistry::instance()->registerTrack(it);
-	journal->setJournalling(true);
-	group.commit();
-	song->setModified();
-	edit.finish(true);
-	res["undoGroupId"] = undoGroup;
-
-	res["ok"] = true;
-	res["trackId"] = handle;
-	res["newRevision"] = static_cast<qint64>(AiProjectRevision::instance()->currentRevision());
-	return res;
+	return runFacadeEdit(song, song, "Create instrument track", undoGroup, [&]() -> QJsonObject {
+		auto* track = dynamic_cast<InstrumentTrack*>(Track::create(Track::Type::Instrument, song));
+		if (!track) { return failure(ErrorCode::InternalError, "Failed to instantiate InstrumentTrack."); }
+		track->loadInstrument(pluginKey);
+		if (!track->instrument() || QString::fromUtf8(track->instrument()->descriptor()->name) != pluginKey)
+		{
+			return failure(ErrorCode::PluginLoadFailed, "Instrument did not load.");
+		}
+		if (!trackName.isEmpty()) { track->setName(trackName); }
+		return {{"ok", true}, {"trackId", AiObjectRegistry::instance()->registerTrack(track)}};
+	});
 }
 
 QJsonObject AiApplicationFacade::listAssets(const QString& rootId, const QString& cursor, int limit)
@@ -870,19 +811,20 @@ QJsonObject AiApplicationFacade::loadAsset(const QString& assetId, const QString
 	}
 	const bool preset = QFileInfo(path).suffix().compare("xpf", Qt::CaseInsensitive) == 0;
 	QDomDocument document;
+	QDomElement element;
 	if (preset)
 	{
-		QFile file(path);
-		if (!file.open(QIODevice::ReadOnly) || !document.setContent(&file))
+		DataFile validation(path, false);
+		if (!validation.lastLoadError().isEmpty())
 		{
 			return failure(ErrorCode::ValidationError, "Malformed preset XML.");
 		}
-		DataFile validation(path);
 		if (validation.hasLocalPlugins())
 		{
 			return failure(ErrorCode::PermissionDenied, "Preset contains local plugin paths.");
 		}
 		document = validation;
+		element = validation.content().firstChildElement("instrumenttrack");
 	}
 	else
 	{
@@ -896,9 +838,8 @@ QJsonObject AiApplicationFacade::loadAsset(const QString& assetId, const QString
 		auto settings = document.createElement("audiofileprocessor");
 		settings.setAttribute("src", path);
 		instrument.appendChild(settings);
+		element = root;
 	}
-	auto element = document.documentElement();
-	if (preset) { element = element.firstChildElement("instrumenttrack"); }
 	const QString plugin = element.firstChildElement("instrument").attribute("name");
 	const auto allowed = listInstruments("internal", {}, 500)["instruments"].toArray();
 	bool found = false;
@@ -910,30 +851,19 @@ QJsonObject AiApplicationFacade::loadAsset(const QString& assetId, const QString
 	{
 		return failure(ErrorCode::PluginUnavailable, "Preset instrument is not an available internal adapter.");
 	}
-	auto* journal = Engine::projectJournal();
-	if (journal->isGroupOpen()) { return failure(ErrorCode::Busy, "Journal busy."); }
 	const QString groupId = "undo_" + QUuid::createUuid().toString(QUuid::WithoutBraces);
-	FacadeEditScope edit(song);
-	ProjectJournal::GroupGuard group(journal, "Load catalog asset", groupId);
-	journal->addJournalCheckPoint(track);
-	JournalPause pause(journal);
-	QDomDocument presetDocument;
-	auto wrapper = presetDocument.createElement("track");
-	presetDocument.appendChild(wrapper);
-	wrapper.appendChild(presetDocument.importNode(element, true));
-	track->loadPreset(wrapper);
-	const bool loaded = track->instrumentName() == plugin;
-	journal->setJournalling(true);
-	if (loaded)
-	{
-		group.commit();
-		song->setModified();
-	}
-	else { journal->cancelJournalGroup(); }
-	edit.finish(loaded);
-	if (!loaded) { return failure(ErrorCode::PluginLoadFailed, "Instrument loading failed; original track restored."); }
-	return {{"ok", true}, {"undoGroupId", groupId},
-		{"newRevision", static_cast<qint64>(AiProjectRevision::instance()->currentRevision())}};
+	return runFacadeEdit(song, track, "Load catalog asset", groupId, [&]() -> QJsonObject {
+		QDomDocument presetDocument;
+		auto wrapper = presetDocument.createElement("track");
+		presetDocument.appendChild(wrapper);
+		wrapper.appendChild(presetDocument.importNode(element, true));
+		track->loadPreset(wrapper);
+		if (!track->instrument() || QString::fromUtf8(track->instrument()->descriptor()->name) != plugin)
+		{
+			return failure(ErrorCode::PluginLoadFailed, "Instrument loading failed; original track restored.");
+		}
+		return {{"ok", true}};
+	});
 }
 
 QJsonObject AiApplicationFacade::saveProjectCopy(const QString& fileName)

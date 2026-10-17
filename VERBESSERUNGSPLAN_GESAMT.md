@@ -9,6 +9,8 @@
 
 **Nachbesserung von `64bc33825`:** Dateischutz, XML-Kompatibilität, Recoveryclaims, Workerfehler/Deadlines und Testlauncher wurden korrigiert. Nachweise: [findings.md](doc/stabilization/findings.md). 8/8 Minimaltests und 25/25 DPI-Tests bestehen jeweils in Release/Debug. Vollbuild, Engineintegration und Produkt-/Langlaufabnahme bleiben offen; lokale Vollkonfigurationen scheitern an MSVC >= 19.51 gegenüber installiertem 19.44.
 
+**MCP-Nachbesserung vom 17. Oktober 2026:** Englische, übersetzbare Oberfläche; korrekter Bereitschaftsstatus; abgesicherte Dienst-/Companiongenerationen und Ressourceninstanzen; korrigierte Instrumentenschlüssel und Presetknoten; gemeinsamer Rollback sowie behobene GUI-Lebensdauerfehler bei Wiederherstellung. Nachweis und Grenzen: [MCP-Untersuchungsbericht](doc/mcp/connection-incident-2026-10-17.md). Companion 27/27, native MCP-/Oberflächentests 17/17 mit vollständigem Qt-6-/MSVC-19.51-Link bestanden; vollständige Anwendungsbuilds mit MCP ON und OFF erfolgreich. Diese Ergebnisse ergänzen die historischen Toolchainangaben oben; installierte Anwendung und musikalische Sitzung wurden nicht verändert.
+
 ## 1. Ziel und wichtigste Entscheidung
 
 LMMS soll im täglichen Arbeiten zuverlässig reagieren, Projekte sicher speichern, auch große Arrangements flüssig darstellen und bei Last oder fehlerhaften Plugins kontrolliert reagieren. Die vorhandenen Qt-Widgets-, Audio-, Journal- und MCP-Strukturen bieten dafür eine brauchbare Grundlage.

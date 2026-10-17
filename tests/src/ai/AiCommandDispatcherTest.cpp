@@ -3,12 +3,29 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QProcessEnvironment>
+#include <QDir>
+#include <QLocalSocket>
+#include <QtEndian>
 #include <QtTest>
 
 #include "AiControlService.h"
 #include "AiProjectRevision.h"
 #include "Engine.h"
+#include "DataFile.h"
 #include "Song.h"
+
+namespace {
+struct ScopedProcess : QProcess
+{
+	~ScopedProcess() override
+	{
+		if (state() != QProcess::NotRunning) { kill(); waitForFinished(1000); }
+	}
+};
+}
 
 class AiCommandDispatcherTest : public QObject
 {
@@ -150,6 +167,130 @@ private slots:
 		const auto errors = process.readAllStandardError();
 		QVERIFY2(process.exitCode() == 0, errors.constData());
 		QVERIFY(QJsonDocument::fromJson(process.readAllStandardOutput()).object()["ok"].toBool());
+	}
+	void testRapidRestartIgnoresPreviousStartCompletion()
+	{
+		using namespace lmms::ai;
+		auto* service = AiControlService::instance();
+		QSignalSpy changes(service, &AiControlService::statusChanged);
+		service->stopService();
+		QVERIFY(service->startService(m_directory.filePath("first.json")));
+		const auto first = service->instanceId();
+		service->stopService();
+		QVERIFY(service->startService(m_directory.filePath("second.json")));
+		QVERIFY(service->instanceId() != first);
+		QVERIFY(!service->isPublished());
+		QTRY_VERIFY(service->isReady());
+		QVERIFY(!QFile::exists(m_directory.filePath("first.json")));
+		QFile file(service->connectionFilePath());
+		QVERIFY(file.open(QIODevice::ReadOnly));
+		const auto published = QJsonDocument::fromJson(file.readAll()).object();
+		QCOMPARE(published["instanceId"].toString(), service->instanceId());
+		QCOMPARE(published["endpoint"].toString(), service->endpointName());
+		QVERIFY(changes.count() >= 4);
+	}
+	void testInstrumentsInIsolatedApplication()
+	{
+#ifndef LMMS_TEST_APP
+		QSKIP("The application integration test requires Organic and TripleOscillator in PLUGIN_LIST.");
+#else
+		// Windows instrument DLLs import lmms.exe; they must run in the real app,
+		// not in a second copy of the engine linked into this test executable.
+		QTemporaryDir directory;
+		QVERIFY(QDir(directory.path()).mkpath("presets"));
+		lmms::DataFile preset(lmms::DataFile::Type::InstrumentTrackSettings);
+		auto track = preset.createElement("instrumenttrack");
+		preset.content().appendChild(track);
+		auto instrument = preset.createElement("instrument");
+		instrument.setAttribute("name", "organic");
+		instrument.appendChild(preset.createElement("organic"));
+		track.appendChild(instrument);
+		QVERIFY(preset.writeFile(directory.filePath("presets/test-organic.xpf"), false, false));
+		QFile malformed(directory.filePath("presets/malformed.xpf"));
+		QVERIFY(malformed.open(QIODevice::WriteOnly));
+		malformed.write("<incomplete"); malformed.close();
+		QFile config(directory.filePath("config.xml"));
+		QVERIFY(config.open(QIODevice::WriteOnly));
+		QByteArray xml = "<lmms version=\"1.3.0-alpha\" configversion=\"1\"><app configured=\"1\" language=\"en\" openlastproject=\"0\"/>"
+			"<ui enableautosave=\"0\"/><audioengine audiodev=\"Dummy (no sound output)\" mididev=\"Dummy (no MIDI support)\"/>"
+			"<paths workingdir=\"";
+		xml += directory.path().toHtmlEscaped().toUtf8();
+		xml += "/\"/></lmms>";
+		config.write(xml); config.close();
+		ScopedProcess app;
+		auto environment = QProcessEnvironment::systemEnvironment();
+		environment.insert("QT_QPA_PLATFORM", "offscreen");
+		environment.insert("LMMS_DATA_DIR", LMMS_TEST_DATA_DIR);
+		app.setProcessEnvironment(environment);
+		const auto connection = directory.filePath("connection.json");
+		QStringList arguments{"--config", config.fileName(), "--mcp-connection-file", connection};
+		const auto debugger = qEnvironmentVariable("LMMS_TEST_DEBUGGER");
+		if (!debugger.isEmpty()) { arguments.prepend(LMMS_TEST_APP); }
+		app.start(debugger.isEmpty() ? LMMS_TEST_APP : debugger, arguments);
+		QVERIFY(app.waitForStarted());
+		QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(connection) || app.state() == QProcess::NotRunning, 10000);
+		QVERIFY2(QFile::exists(connection), app.readAllStandardError().constData());
+		const auto peer = QFINDTESTDATA("../../../tools/mcp/dist/test/native-peer.js");
+		ScopedProcess node;
+		node.start(QStandardPaths::findExecutable("node"), {peer, connection, "--instruments"});
+		QTRY_VERIFY_WITH_TIMEOUT(node.state() == QProcess::NotRunning, 10000);
+		const auto errors = node.readAllStandardError();
+		QVERIFY2(node.exitCode() == 0,
+			(errors + app.readAllStandardError() + app.readAllStandardOutput()).constData());
+		QVERIFY2(app.state() == QProcess::Running, app.readAllStandardError().constData());
+		app.kill();
+		QVERIFY(app.waitForFinished());
+#endif
+	}
+	void testPublicationFailureKeepsForeignFileAndCanRecover()
+	{
+		using namespace lmms::ai;
+		auto* service = AiControlService::instance();
+		service->stopService();
+		const auto occupied = m_directory.filePath("occupied.json");
+		QFile file(occupied);
+		QVERIFY(file.open(QIODevice::WriteOnly));
+		QCOMPARE(file.write("foreign file"), qint64(12));
+		file.close();
+		QVERIFY(service->startService(occupied));
+		QVERIFY(!service->isPublished());
+		QTRY_VERIFY(!service->isRunning());
+		QVERIFY(!service->isReady());
+		QVERIFY(!service->lastError().isEmpty());
+		QVERIFY(file.open(QIODevice::ReadOnly));
+		QCOMPARE(file.readAll(), QByteArray("foreign file"));
+		file.close();
+		QVERIFY(service->startService(m_directory.filePath("recovered.json")));
+		QTRY_VERIFY(service->isReady());
+		QVERIFY(service->lastError().isEmpty());
+	}
+	void testPermissionChangeRevokesAuthenticatedSocket()
+	{
+		using namespace lmms::ai;
+		auto* service = AiControlService::instance();
+		QLocalSocket socket;
+		socket.connectToServer(service->endpointName());
+		QVERIFY(socket.waitForConnected(1000));
+		const QJsonObject request{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "auth.handshake"},
+			{"params", QJsonObject{{"instanceId", service->instanceId()}, {"authToken", service->authToken()},
+				{"ipcProtocolVersion", "1.0"}}}};
+		const auto body = QJsonDocument(request).toJson(QJsonDocument::Compact);
+		QByteArray header(4, '\0');
+		qToBigEndian<quint32>(body.size(), reinterpret_cast<uchar*>(header.data()));
+		socket.write(header + body);
+		QVERIFY(socket.waitForReadyRead(1000));
+		QByteArray response = socket.readAll();
+		while (response.size() < 4 || response.size() < 4 + qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(response.constData())))
+		{
+			QVERIFY(socket.waitForReadyRead(1000));
+			response += socket.readAll();
+		}
+		QVERIFY(QJsonDocument::fromJson(response.mid(4)).object()["result"].toObject()["ok"].toBool());
+		const auto previous = service->grantedPermissions();
+		service->setGrantedPermissions(Permission::Read);
+		QTRY_COMPARE(socket.state(), QLocalSocket::UnconnectedState);
+		service->setGrantedPermissions(previous);
+		QVERIFY(service->isReady());
 	}
 };
 

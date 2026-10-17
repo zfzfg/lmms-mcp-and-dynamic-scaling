@@ -104,10 +104,12 @@ bool AiControlService::startService(const QString& customConnectionFilePath)
 	if (m_ioThread && m_ioThread->isRunning())
 	{
 		m_lastError = "MCP shutdown timed out";
+		emit statusChanged();
 		return false;
 	}
 
 	m_shuttingDown = false;
+	const auto generation = ++m_serviceGeneration;
 	m_instanceId = QString("inst_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
 	m_authToken
 		= QUuid::createUuid().toString(QUuid::WithoutBraces) + QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -130,16 +132,18 @@ bool AiControlService::startService(const QString& customConnectionFilePath)
 	AiProjectRevision::instance()->attachToSong(Engine::getSong());
 	m_lastError.clear();
 	m_ioThread = std::make_unique<QThread>();
-	m_server = std::make_unique<AiLocalServer>();
+	m_server = std::make_unique<AiLocalServer>(m_instanceId, m_authToken);
 	m_server->moveToThread(m_ioThread.get());
 	m_running = true;
-	connect(m_ioThread.get(), &QThread::started, m_server.get(), [this] {
-		const bool listening = m_server->startListening(m_endpointName);
-		const QString address = m_server->serverName();
+	auto* server = m_server.get();
+	const auto endpoint = m_endpointName;
+	connect(m_ioThread.get(), &QThread::started, server, [this, server, endpoint, generation] {
+		const bool listening = server->startListening(endpoint);
+		const QString address = server->serverName();
 		QMetaObject::invokeMethod(
 			this,
-			[this, listening, address] {
-				if (!m_running) { return; }
+			[this, listening, address, generation] {
+				if (!m_running || generation != m_serviceGeneration) { return; }
 				if (!listening)
 				{
 					m_lastError = "Cannot listen on the local MCP endpoint.";
@@ -154,10 +158,12 @@ bool AiControlService::startService(const QString& customConnectionFilePath)
 					return;
 				}
 				m_listening = true;
+				emit statusChanged();
 			},
 			Qt::QueuedConnection);
 	});
 	m_ioThread->start();
+	emit statusChanged();
 
 	return true;
 }
@@ -168,7 +174,7 @@ void AiControlService::stopService()
 	if (!m_running && !m_shuttingDown && !m_server && !threadRunning) { return; }
 
 	const bool firstStop = !m_shuttingDown;
-	m_ready = false;
+	++m_serviceGeneration;
 	m_listening = false;
 	m_running = false;
 	m_shuttingDown = true;
@@ -212,6 +218,7 @@ void AiControlService::stopService()
 		m_ioThread.reset();
 	}
 
+	emit statusChanged();
 	if (!firstStop) { return; }
 	AiJobManager::instance()->shutdown();
 	AiProjectRevision::instance()->detach();
@@ -234,7 +241,7 @@ void AiControlService::recordResult(const QString& action, const QJsonObject& re
 
 void AiControlService::setReady(bool ready)
 {
-	m_ready = ready;
+	if (m_ready.exchange(ready) != ready) { emit statusChanged(); }
 }
 
 void AiControlService::setGrantedPermissions(Permission permissions)
@@ -244,11 +251,10 @@ void AiControlService::setGrantedPermissions(Permission permissions)
 	++m_permissionGeneration;
 	if (m_server)
 	{
+		auto* server = m_server.get();
 		QMetaObject::invokeMethod(
-			m_server.get(),
-			[this] {
-				if (m_server) { m_server->revokeSessions(); }
-			},
+			server,
+			[server] { server->revokeSessions(); },
 			Qt::QueuedConnection);
 	}
 	AiChangePlanManager::instance()->clear();

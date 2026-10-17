@@ -9,6 +9,7 @@ import { ErrorCode, LmmsBridgeError } from "../src/errors.js";
 describe("BridgeClient IPC and Framing", () => {
   let mockServer: net.Server;
   let connections = 0;
+  let mutations = 0;
   let pipeName: string;
   let socketPath: string;
 
@@ -49,6 +50,11 @@ describe("BridgeClient IPC and Framing", () => {
             sock.write(header);
             sock.write(payload);
           } else if (req.method === "domain.call") {
+            if (req.params.action === "create_instrument_track") {
+              mutations++;
+              sock.destroy();
+              return;
+            }
             const resp = {
               jsonrpc: "2.0",
               id: req.id,
@@ -110,6 +116,31 @@ describe("BridgeClient IPC and Framing", () => {
     await assert.rejects(pending, (error: unknown) => error instanceof LmmsBridgeError && error.code === ErrorCode.NotConnected);
     const result = await client.call("get_status", { reconnected: true });
     assert.strictEqual(result.echo.reconnected, true); client.close();
+  });
+
+  test("disconnect during mutation reports uncertainty without replaying it", async () => {
+    const client = new BridgeClient({ instanceId: "lost-write", endpoint: socketPath, authToken: "test" });
+    const before = mutations;
+    try {
+      await assert.rejects(client.call("create_instrument_track", { pluginKey: "organic" }, "write-once"),
+        (error: unknown) => error instanceof LmmsBridgeError && error.code === ErrorCode.NotConnected
+          && /may have completed/.test(error.message) && /new connection file/.test(error.message));
+      await client.call("get_status");
+      assert.strictEqual(mutations - before, 1);
+    } finally { client.close(); }
+  });
+
+  test("missing selected endpoint explains restart recovery without exposing the token", async () => {
+    const endpoint = process.platform === "win32"
+      ? `\\\\.\\pipe\\missing-lmms-${process.pid}-${Date.now()}`
+      : path.join(os.tmpdir(), `missing-lmms-${process.pid}-${Date.now()}.sock`);
+    const client = new BridgeClient({ instanceId: "stale-instance", endpoint, authToken: "private-token" });
+    try {
+      await assert.rejects(client.call("get_status"), (error: unknown) =>
+        error instanceof LmmsBridgeError && error.code === ErrorCode.NotConnected
+        && /stale-instance/.test(error.message) && /new connection file/.test(error.message)
+        && !error.message.includes("private-token"));
+    } finally { client.close(); }
   });
 
 });

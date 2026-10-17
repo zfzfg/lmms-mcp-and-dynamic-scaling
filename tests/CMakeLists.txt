@@ -42,6 +42,7 @@ if(WANT_MCP)
 		src/ai/AiJobManagerTest.cpp
 		src/ai/AiChangePlanValidationTest.cpp
 		src/ai/AiDomainContractTest.cpp
+		src/gui/AiConnectionDialogTest.cpp
 	)
 endif()
 
@@ -53,6 +54,13 @@ foreach(LMMS_TEST_SRC IN LISTS LMMS_TESTS)
 	lmms_add_qtest(${LMMS_TEST_NAME} ${LMMS_TEST_NAME} -o -,txt)
 	if(WANT_MCP AND TARGET mcp-companion AND LMMS_TEST_NAME STREQUAL "AiCommandDispatcherTest")
 		add_dependencies(${LMMS_TEST_NAME} mcp-companion)
+		if(TARGET organic AND TARGET tripleoscillator)
+			add_dependencies(${LMMS_TEST_NAME} organic tripleoscillator)
+			target_compile_definitions(${LMMS_TEST_NAME} PRIVATE "LMMS_TEST_APP=\"$<TARGET_FILE:lmms>\""
+				"LMMS_TEST_DATA_DIR=\"${CMAKE_SOURCE_DIR}/data\"")
+			set_tests_properties(${LMMS_TEST_NAME} PROPERTIES
+				ENVIRONMENT "LMMS_PLUGIN_DIR=$<TARGET_FILE_DIR:organic>")
+		endif()
 	endif()
 	if(LMMS_TEST_SRC MATCHES "src/gui/")
 		set_tests_properties(${LMMS_TEST_NAME} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
@@ -61,6 +69,18 @@ foreach(LMMS_TEST_SRC IN LISTS LMMS_TESTS)
 			set_tests_properties(${LMMS_TEST_NAME}_${DPI_SCALE} PROPERTIES
 				ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_SCALE_FACTOR=${DPI_SCALE};QT_AUTO_SCREEN_SCALE_FACTOR=0;QT_ENABLE_HIGHDPI_SCALING=1;QT_SCALE_FACTOR_ROUNDING_POLICY=PassThrough")
 		endforeach()
+	endif()
+	if(LMMS_TEST_NAME STREQUAL "AiConnectionDialogTest")
+		find_program(LMMS_TEST_LRELEASE NAMES lrelease lrelease-qt6)
+		if(LMMS_TEST_LRELEASE)
+			set(_mcp_test_translation "${CMAKE_CURRENT_BINARY_DIR}/mcp-test-de.qm")
+			add_custom_command(OUTPUT "${_mcp_test_translation}"
+				COMMAND "${LMMS_TEST_LRELEASE}" "${CMAKE_SOURCE_DIR}/data/locale/de.ts" -qm "${_mcp_test_translation}"
+				DEPENDS "${CMAKE_SOURCE_DIR}/data/locale/de.ts" VERBATIM)
+			add_custom_target(mcp-test-translation DEPENDS "${_mcp_test_translation}")
+			add_dependencies(${LMMS_TEST_NAME} mcp-test-translation)
+			target_compile_definitions(${LMMS_TEST_NAME} PRIVATE "LMMS_TEST_TRANSLATION_FILE=\"${_mcp_test_translation}\"")
+		endif()
 	endif()
 
 	# TODO CMake 3.12: Propagate usage requirements by linking to lmmsobjs

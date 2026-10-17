@@ -21,7 +21,7 @@ export const RESOURCES: ResourceDefinition[] = [
     mimeType: "application/json",
     read: async (client, uri, match) => {
       const projectId = match[2];
-      const res = await client.call("get_project", { projectId });
+      const res = await client.callForInstance(match[1], "get_project", { projectId });
       return {
         contents: [{
           uri,
@@ -37,8 +37,8 @@ export const RESOURCES: ResourceDefinition[] = [
     name: "LMMS Capabilities",
     description: "Active permissions, supported tools and features",
     mimeType: "application/json",
-    read: async (client, uri) => {
-      const res = await client.call("get_status");
+    read: async (client, uri, match) => {
+      const res = await client.callForInstance(match[1], "get_status");
       return {
         contents: [{
           uri,
@@ -55,9 +55,9 @@ export const RESOURCES: ResourceDefinition[] = [
     description: "Track settings, instrument and clips",
     mimeType: "application/json",
     read: async (client, uri, match) => {
-      await client.call("get_project", { projectId: match[2] });
+      await client.callForInstance(match[1], "get_project", { projectId: match[2] });
       const trackId = match[3];
-      const clipsRes = await client.call("list_clips", { trackId });
+      const clipsRes = await client.callForInstance(match[1], "list_clips", { trackId });
       return {
         contents: [{
           uri,
@@ -72,8 +72,8 @@ export const RESOURCES: ResourceDefinition[] = [
     uriPattern: /^lmms:\/\/instances\/([^/]+)\/projects\/([^/]+)\/clips\/([^/]+)\/summary$/,
     name: "Clip Summary", description: "Revision and bounded note summary for a MIDI clip", mimeType: "application/json",
     read: async (client, uri, match) => {
-      await client.call("get_project", { projectId: match[2] });
-      const notes = await client.call("get_clip_summary", { clipId: match[3] });
+      await client.callForInstance(match[1], "get_project", { projectId: match[2] });
+      const notes = await client.callForInstance(match[1], "get_clip_summary", { clipId: match[3] });
       return { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(notes) }] };
     }
   },
@@ -84,7 +84,7 @@ export const RESOURCES: ResourceDefinition[] = [
     read: async (client, uri, match) => {
       const chunks: Buffer[] = []; let offset = 0; let total = 0; let hash: string | undefined;
       do {
-        const chunk = await client.call("read_artifact", { artifactId: match[2], offset, limit: 256 * 1024 });
+        const chunk = await client.callForInstance(match[1], "read_artifact", { artifactId: match[2], offset, limit: 256 * 1024 });
         if (!Number.isSafeInteger(chunk.totalBytes) || chunk.totalBytes > 16 * 1024 * 1024 || chunk.totalBytes < 1 || chunk.offset !== offset
           || (hash !== undefined && (chunk.sha256 !== hash || chunk.totalBytes !== total))) throw new Error("Invalid artifact metadata.");
         total = chunk.totalBytes; hash = chunk.sha256;

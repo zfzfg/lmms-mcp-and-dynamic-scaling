@@ -30,7 +30,7 @@ class LMMS_EXPORT AiLocalServer : public QObject
 {
 	Q_OBJECT
 public:
-	explicit AiLocalServer(QObject* parent = nullptr);
+	explicit AiLocalServer(const QString& instanceId, const QString& authToken, QObject* parent = nullptr);
 	~AiLocalServer() override;
 
 	bool startListening(const QString& pipeOrSocketName);
@@ -51,6 +51,8 @@ private:
 		QLocalSocket* socket, qint64 id, const QJsonObject& result, const DomainError& error = DomainError());
 
 	QPointer<QLocalSocket> m_writer;
+	const QString m_instanceId;
+	const QString m_authToken;
 	QLocalServer* m_server{nullptr};
 	mutable QMutex m_mutex;
 	QHash<QLocalSocket*, ClientSession> m_clients;

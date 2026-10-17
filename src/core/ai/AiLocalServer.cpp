@@ -13,8 +13,10 @@
 
 namespace lmms::ai {
 
-AiLocalServer::AiLocalServer(QObject* parent)
+AiLocalServer::AiLocalServer(const QString& instanceId, const QString& authToken, QObject* parent)
 	: QObject(parent)
+	, m_instanceId(instanceId)
+	, m_authToken(authToken)
 {
 	m_server = new QLocalServer(this);
 	connect(m_server, &QLocalServer::newConnection, this, &AiLocalServer::onNewConnection);
@@ -168,7 +170,7 @@ void AiLocalServer::processFrame(QLocalSocket* socket, const QByteArray& frame)
 		QString instId = params["instanceId"].toString();
 		QString token = params["authToken"].toString();
 
-		if (instId == AiControlService::instance()->instanceId() && token == AiControlService::instance()->authToken())
+		if (instId == m_instanceId && token == m_authToken)
 		{
 			if (params["ipcProtocolVersion"].toString() != "1.0")
 			{

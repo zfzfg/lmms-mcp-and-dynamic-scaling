@@ -4,7 +4,7 @@ if(NOT MCP_NODE_EXECUTABLE OR NOT MCP_NPM_EXECUTABLE)
  message(FATAL_ERROR "MCP development builds require Node.js 24.19.0 and npm; installed packages bundle their own runtime")
 endif()
 set(MCP_PACKAGE_DIR "${CMAKE_CURRENT_BINARY_DIR}/mcp-package")
-file(GLOB_RECURSE MCP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.ts")
+file(GLOB_RECURSE MCP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.ts" "${CMAKE_CURRENT_SOURCE_DIR}/test/*.ts")
 add_custom_command(OUTPUT "${MCP_PACKAGE_DIR}/versions.json"
  COMMAND "${MCP_NPM_EXECUTABLE}" ci --ignore-scripts --no-audit --no-fund
  COMMAND "${MCP_NPM_EXECUTABLE}" run build

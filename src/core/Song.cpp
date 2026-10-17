@@ -991,7 +991,7 @@ void Song::createNewProject()
 
 	m_loadingProject = false;
 #ifdef LMMS_HAVE_MCP
-	if (ai::AiControlService::instance()->isRunning()) { ai::AiControlService::instance()->setReady(true); }
+	ai::AiControlService::instance()->setReady(true);
 #endif
 	updateLength();
 	Engine::patternStore()->updateAfterTrackAdd();
@@ -1275,7 +1275,7 @@ void Song::loadProject( const QString & fileName )
 	m_loadingProject = false;
 	scope.dismiss();
 #ifdef LMMS_HAVE_MCP
-	if (ai::AiControlService::instance()->isRunning()) { ai::AiControlService::instance()->setReady(true); }
+	ai::AiControlService::instance()->setReady(true);
 #endif
 	updateLength();
 	setModified(false);

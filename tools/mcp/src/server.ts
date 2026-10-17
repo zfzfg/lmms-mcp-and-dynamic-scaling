@@ -34,7 +34,6 @@ export class LmmsMcpServer {
     for (const resource of RESOURCES) {
       server.registerResource(resource.name, new ResourceTemplate(resource.uriTemplate, { list: undefined }),
         { description: resource.description, mimeType: resource.mimeType }, async (uri) => {
-          this.bridgeClient.assertInstance(uri.hostname === "instances" ? uri.pathname.split("/")[1] : "");
           const match = uri.toString().match(resource.uriPattern);
           if (!match) { throw new Error("Invalid resource URI."); }
           return resource.read(this.bridgeClient, uri.toString(), match);

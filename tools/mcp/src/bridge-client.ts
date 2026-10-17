@@ -1,6 +1,5 @@
 import * as net from "node:net";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { ErrorCode, LmmsBridgeError } from "./errors.js";
 
@@ -36,21 +35,25 @@ export class BridgeClient {
   private config?: ConnectionConfig;
   private nextId = 1;
   private authenticated = false;
+  private generation = 0;
+  private activeCalls = 0;
   private receiveBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: unknown) => void; timer: NodeJS.Timeout }>();
   constructor(private source: ConnectionConfig | (() => ConnectionConfig)) { if (typeof source !== "function") this.config = source; }
   public get instanceId(): string { return this.config?.instanceId ?? "unavailable"; }
   public assertInstance(instanceId: string): void {
-    const config = this.config ?? (typeof this.source === "function" ? this.source() : this.source);
-    if (config.instanceId !== instanceId) throw bridgeError(ErrorCode.PermissionDenied, "Resource belongs to another instance.");
+    if (!this.authenticated || this.config?.instanceId !== instanceId)
+      throw bridgeError(ErrorCode.PermissionDenied, "Resource belongs to another instance or connection is not authenticated.");
   }
   public async connect(): Promise<void> {
     if (this.authenticated) return;
     if (this.connecting) return this.connecting;
-    this.connecting = this.open().finally(() => { this.connecting = undefined; });
-    return this.connecting;
+    const connecting = this.open().finally(() => { if (this.connecting === connecting) this.connecting = undefined; });
+    this.connecting = connecting;
+    return connecting;
   }
   private async open(): Promise<void> {
+    const generation = ++this.generation;
     this.config = typeof this.source === "function" ? this.source() : this.source;
     const config = this.config;
     if (process.platform !== "win32" && !path.isAbsolute(config.endpoint)) throw bridgeError(ErrorCode.ValidationError, "LMMS must publish an absolute socket address.");
@@ -59,28 +62,43 @@ export class BridgeClient {
     const socket = net.createConnection(address); this.socket = socket;
     socket.on("data", (chunk: Buffer) => { if (this.socket === socket) this.onData(chunk); });
     socket.on("error", () => {});
-    socket.on("close", () => { if (this.socket === socket) this.reset(bridgeError(ErrorCode.NotConnected, "Connection to LMMS closed.")); });
+    socket.on("close", () => { if (this.socket === socket) this.reset(bridgeError(ErrorCode.NotConnected,
+      "Connection to the selected LMMS instance closed. A pending mutation may have completed; do not replay it automatically. If LMMS restarted, select its new connection file in the MCP host and reconnect.")); });
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => { socket.destroy(); reject(bridgeError(ErrorCode.Timeout, "Connection timed out.")); }, 3000);
         socket.once("connect", () => { clearTimeout(timer); resolve(); });
-        socket.once("error", error => { clearTimeout(timer); reject(bridgeError(ErrorCode.NotConnected, error.message)); });
+        socket.once("error", error => { clearTimeout(timer); reject(bridgeError(ErrorCode.NotConnected,
+          `Cannot connect to selected LMMS instance ${config.instanceId}: ${error.message}. If LMMS restarted, select its new connection file in the MCP host and reconnect. No other instance is selected automatically.`)); });
         socket.once("close", () => { clearTimeout(timer); reject(bridgeError(ErrorCode.NotConnected, "Connection closed.")); });
       });
+      if (generation !== this.generation || this.socket !== socket || socket.destroyed)
+        throw bridgeError(ErrorCode.NotConnected, "Connection attempt cancelled.");
       const handshake = await this.request("auth.handshake", { instanceId: config.instanceId, authToken: config.authToken,
         ipcProtocolVersion: "1.0", clientVersion: "1.1.0", requestedPermissions: config.requestedPermissions }, 3000);
       if (!handshake?.ok || handshake.instanceId !== config.instanceId || handshake.ipcProtocolVersion !== "1.0")
         throw bridgeError(ErrorCode.PermissionDenied, "Unexpected instance or IPC version in handshake.");
+      if (generation !== this.generation || this.socket !== socket || socket.destroyed)
+        throw bridgeError(ErrorCode.NotConnected, "Connection attempt cancelled.");
       this.authenticated = true;
-    } catch (error) { this.close(); throw error; }
+    } catch (error) { if (generation === this.generation) this.close(); throw error; }
   }
-  public async call(action: string, payload: Record<string, unknown> = {}, operationKey?: string, deadlineMs = 5000): Promise<any> {
-    await this.connect();
+  public async call(action: string, payload: Record<string, unknown> = {}, operationKey?: string, deadlineMs = 5000,
+    expectedInstance?: string): Promise<any> {
     if (!Number.isInteger(deadlineMs) || deadlineMs <= 0 || deadlineMs > 30000) throw bridgeError(ErrorCode.ValidationError, "Invalid deadline.");
-    if (this.pending.size >= 64) throw bridgeError(ErrorCode.Busy, "Too many pending requests.");
-    const writes = new Set(["apply_changes", "set_transport", "undo", "redo", "create_instrument_track", "load_asset", "save_project_copy", "start_render", "cancel_job"]);
-    const key = operationKey ?? (writes.has(action) ? payload.operationKey : undefined);
-    return this.request("domain.call", { action, payload, operationKey: key, deadlineMs }, deadlineMs + 500);
+    if (this.activeCalls >= 64) throw bridgeError(ErrorCode.Busy, "Too many pending requests.");
+    ++this.activeCalls;
+    try {
+      await this.connect();
+      if (!this.authenticated) throw bridgeError(ErrorCode.NotConnected, "Connection closed before request.");
+      if (expectedInstance !== undefined) this.assertInstance(expectedInstance);
+      const writes = new Set(["apply_changes", "set_transport", "undo", "redo", "create_instrument_track", "load_asset", "save_project_copy", "start_render", "cancel_job"]);
+      const key = operationKey ?? (writes.has(action) ? payload.operationKey : undefined);
+      return await this.request("domain.call", { action, payload, operationKey: key, deadlineMs }, deadlineMs + 500);
+    } finally { --this.activeCalls; }
+  }
+  public callForInstance(instanceId: string, action: string, payload: Record<string, unknown> = {}): Promise<any> {
+    return this.call(action, payload, undefined, 5000, instanceId);
   }
   private request(method: string, params: Record<string, unknown>, timeout: number): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -106,7 +124,17 @@ export class BridgeClient {
       if (this.receiveBuffer.length < size + 4) return;
       const frame = this.receiveBuffer.subarray(4, size + 4); this.receiveBuffer = this.receiveBuffer.subarray(size + 4);
       try {
-        const response = JSON.parse(frame.toString("utf8")); const request = this.pending.get(response.id);
+        const response = JSON.parse(frame.toString("utf8"));
+        const object = (value: any) => value !== null && typeof value === "object" && !Array.isArray(value);
+        const validError = (value: any) => object(value) && typeof value.code === "string" && typeof value.message === "string";
+        if (!object(response) || response.jsonrpc !== "2.0" || !Number.isSafeInteger(response.id) || response.id < 0
+          || Object.hasOwn(response, "result") === Object.hasOwn(response, "error")
+          || (Object.hasOwn(response, "error") && !validError(response.error))
+          || (Object.hasOwn(response, "result") && (!object(response.result)
+            || typeof response.result.ok !== "boolean" || (response.result.ok === false && !validError(response.result.error))))) {
+          throw new Error("Invalid IPC response.");
+        }
+        const request = this.pending.get(response.id);
         if (!request) continue;
         clearTimeout(request.timer); this.pending.delete(response.id);
         const error = response.error ?? (response.result?.ok === false ? response.result.error : undefined);
@@ -115,6 +143,7 @@ export class BridgeClient {
     }
   }
   private reset(error: Error): void {
+    ++this.generation; this.connecting = undefined;
     this.authenticated = false; this.socket = null; this.receiveBuffer = Buffer.alloc(0);
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
     this.pending.clear();

@@ -81,7 +81,7 @@ Track::~Track()
 
 Track * Track::create( Type tt, TrackContainer * tc )
 {
-	Engine::audioEngine()->requestChangeInModel();
+	const auto modelGuard = Engine::audioEngine()->requestChangesGuard();
 
 	Track * t = nullptr;
 
@@ -105,7 +105,6 @@ Track * Track::create( Type tt, TrackContainer * tc )
 
 	tc->updateAfterTrackAdd();
 
-	Engine::audioEngine()->doneChangeInModel();
 
 	return t;
 }
@@ -115,7 +114,7 @@ Track * Track::create( Type tt, TrackContainer * tc )
 
 Track * Track::create( const QDomElement & element, TrackContainer * tc )
 {
-	Engine::audioEngine()->requestChangeInModel();
+	const auto modelGuard = Engine::audioEngine()->requestChangesGuard();
 
 	Track * t = create(
 		static_cast<Type>( element.attribute( "type" ).toInt() ),
@@ -125,7 +124,6 @@ Track * Track::create( const QDomElement & element, TrackContainer * tc )
 		t->restoreState( element );
 	}
 
-	Engine::audioEngine()->doneChangeInModel();
 
 	return t;
 }

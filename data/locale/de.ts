@@ -16361,4 +16361,96 @@ Latenz: %2 ms</translation>
         <translation>GUI anzeigen</translation>
     </message>
 </context>
+
+<context>
+    <name>lmms::gui::AiConnectionDialog</name>
+    <message>
+        <source>AI Control / MCP Connection</source>
+        <translation>KI-Steuerung / MCP-Verbindung</translation>
+    </message>
+    <message>
+        <source>Local endpoint:</source>
+        <translation>Lokaler Endpunkt:</translation>
+    </message>
+    <message>
+        <source>Connection file:</source>
+        <translation>Verbindungsdatei:</translation>
+    </message>
+    <message>
+        <source>Allow AI to edit the project</source>
+        <translation>Projektbearbeitung durch KI erlauben</translation>
+    </message>
+    <message>
+        <source>Allow AI to export audio</source>
+        <translation>Audio-Export durch KI erlauben</translation>
+    </message>
+    <message>
+        <source>Copy Host Configuration</source>
+        <translation>Host-Konfiguration kopieren</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Schließen</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Status:&lt;/b&gt; Failed. %1</source>
+        <translation>&lt;b&gt;Status:&lt;/b&gt; Fehlgeschlagen. %1</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Status:&lt;/b&gt; Stopped.</source>
+        <translation>&lt;b&gt;Status:&lt;/b&gt; Beendet.</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Status:&lt;/b&gt; Ready for AI connections.</source>
+        <translation>&lt;b&gt;Status:&lt;/b&gt; Bereit für KI-Verbindungen.</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;Status:&lt;/b&gt; Starting. Waiting for the service and project to be ready.</source>
+        <translation>&lt;b&gt;Status:&lt;/b&gt; Startet. Warten auf die Bereitschaft von Dienst und Projekt.</translation>
+    </message>
+    <message>
+        <source>Stop Service</source>
+        <translation>Dienst beenden</translation>
+    </message>
+    <message>
+        <source>Start Service</source>
+        <translation>Dienst starten</translation>
+    </message>
+</context>
+
+<context>
+    <name>lmms::gui::AiControlStatus</name>
+    <message>
+        <source>&lt;span style='color: red;'&gt;● AI failed&lt;/span&gt;</source>
+        <translation>&lt;span style='color: red;'&gt;● KI fehlgeschlagen&lt;/span&gt;</translation>
+    </message>
+    <message>
+        <source>AI control failed: %1</source>
+        <translation>KI-Steuerung fehlgeschlagen: %1</translation>
+    </message>
+    <message>
+        <source>&lt;span style='color: gray;'&gt;● AI stopped&lt;/span&gt;</source>
+        <translation>&lt;span style='color: gray;'&gt;● KI beendet&lt;/span&gt;</translation>
+    </message>
+    <message>
+        <source>AI control is stopped. Click to configure.</source>
+        <translation>KI-Steuerung ist beendet. Zum Konfigurieren klicken.</translation>
+    </message>
+    <message>
+        <source>&lt;span style='color: #4CAF50;'&gt;● AI ready&lt;/span&gt;</source>
+        <translation>&lt;span style='color: #4CAF50;'&gt;● KI bereit&lt;/span&gt;</translation>
+    </message>
+    <message>
+        <source>AI control is ready. Click for details.</source>
+        <translation>KI-Steuerung ist bereit. Für Details klicken.</translation>
+    </message>
+    <message>
+        <source>&lt;span style='color: orange;'&gt;● AI starting&lt;/span&gt;</source>
+        <translation>&lt;span style='color: orange;'&gt;● KI startet&lt;/span&gt;</translation>
+    </message>
+    <message>
+        <source>AI control is starting. Click for details.</source>
+        <translation>KI-Steuerung startet. Für Details klicken.</translation>
+    </message>
+</context>
 </TS>

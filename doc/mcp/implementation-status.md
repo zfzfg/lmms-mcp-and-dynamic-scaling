@@ -2,6 +2,10 @@
 
 Stand: 16. Oktober 2026. Geprüfter Ausgangspunkt: `7c432d420`, `709873202`, `78cb19fe3`. Änderungen liegen im Arbeitsbaum. **Phasen 0–6 sind noch nicht vollständig abgenommen.** Die frühere pauschale Fertigmeldung wurde zurückgenommen. Phase 7 ist nicht Bestandteil dieser Änderung.
 
+## Ergänzung vom 17. Oktober 2026
+
+Die gezielte [MCP-Stabilisierung](connection-incident-2026-10-17.md) ergänzt die folgenden historischen Nachweise: 27/27 Companion-Tests und 17/17 native MCP-/GUI-CTest-Läufe mit vollständig gelinkter Qt-6.8.3-/MSVC-19.51-Anwendung bestanden. Die vollständigen Release-Anwendungsbuilds mit MCP ON und OFF sind erfolgreich. Eine getrennte Anwendung prüft Organic, TripleOscillator und Presetladen über echten IPC einschließlich Undo/Redo. Der Bericht enthält die reproduzierten Absturzpfade und Korrekturen. Die früher genannten offenen Produkt-/Plattformabnahmen werden dadurch nicht pauschal geschlossen.
+
 ## Umgesetzte Arbeitspakete
 
 | Phase | Implementierung im Arbeitsbaum | Nachweis / verbleibendes Gate |

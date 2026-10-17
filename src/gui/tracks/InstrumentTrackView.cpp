@@ -104,6 +104,8 @@ InstrumentTrackView::InstrumentTrackView( InstrumentTrack * _it, TrackContainerV
 							MidiPort::Mode::Input );
 		_it->m_midiPort.m_writablePortsMenu = new MidiPortMenu(
 							MidiPort::Mode::Output );
+		_it->m_midiPort.m_readablePortsMenu->setParent(m_midiMenu);
+		_it->m_midiPort.m_writablePortsMenu->setParent(m_midiMenu);
 		_it->m_midiPort.m_readablePortsMenu->setModel(
 							&_it->m_midiPort );
 		_it->m_midiPort.m_writablePortsMenu->setModel(
@@ -175,8 +177,12 @@ InstrumentTrackView::~InstrumentTrackView()
 	delete m_window;
 	m_window = nullptr;
 
-	delete model()->m_midiPort.m_readablePortsMenu;
-	delete model()->m_midiPort.m_writablePortsMenu;
+	// Menus belong to this view, whose deferred destruction may outlive the track.
+	if (auto* track = model())
+	{
+		track->m_midiPort.m_readablePortsMenu = nullptr;
+		track->m_midiPort.m_writablePortsMenu = nullptr;
+	}
 }
 
 
@@ -428,7 +434,9 @@ QPixmap InstrumentTrackView::determinePixmap(InstrumentTrack* instrumentTrack)
 
 void InstrumentTrackView::corruptStateUpdate()
 {
-	if (model()->audioBusHandle()->isCorrupted())
+	auto* track = model();
+	if (!track) { return; }
+	if (track->audioBusHandle()->isCorrupted())
 	{
 		m_activityIndicator->setState(FadeButton::State::Corrupted);
 		m_activityIndicator->setToolTip(tr("Corrupted audio detected: muting affected channels"));

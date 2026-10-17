@@ -115,9 +115,12 @@ TrackContainerView::TrackContainerView( TrackContainer * _tc ) :
 
 	connect( Engine::getSong(), SIGNAL(timeSignatureChanged(int,int)),
 						this, SLOT(realignTracks()));
-	connect( m_tc, SIGNAL(trackAdded(lmms::Track*)),
-			this, SLOT(createTrackView(lmms::Track*)),
-			Qt::QueuedConnection );
+	connect(m_tc, &TrackContainer::trackAdded, this, [this](Track* track) {
+		const QPointer<Track> guardedTrack(track);
+		QMetaObject::invokeMethod(this, [this, guardedTrack] {
+			if (guardedTrack) { createTrackView(guardedTrack); }
+		}, Qt::QueuedConnection);
+	}, Qt::DirectConnection);
 }
 
 

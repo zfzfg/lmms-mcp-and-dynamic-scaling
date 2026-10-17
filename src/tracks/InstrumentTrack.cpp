@@ -23,6 +23,9 @@
  */
 #include "InstrumentTrack.h"
 
+#include <mutex>
+#include <memory>
+
 #include "AudioEngine.h"
 #include "AutomationClip.h"
 #include "ConfigManager.h"
@@ -885,7 +888,7 @@ void InstrumentTrack::loadTrackSpecificSettings( const QDomElement & thisElement
 	// remove the InstrumentPlayHandle if and only if we need to delete the instrument
 	silenceAllNotes(!reuseInstrument);
 
-	lock();
+	const std::lock_guard<Track> guard(*this);
 
 	m_volumeModel.loadSettings( thisElement, "vol" );
 	m_panningModel.loadSettings( thisElement, "pan" );
@@ -985,7 +988,6 @@ void InstrumentTrack::loadTrackSpecificSettings( const QDomElement & thisElement
 	m_midiCCEnable->loadSettings(thisElement, "enablecc");
 
 	updatePitchRange();
-	unlock();
 }
 
 
@@ -1045,11 +1047,12 @@ Instrument * InstrumentTrack::loadInstrument(const QString & _plugin_name,
 
 	silenceAllNotes( true );
 
-	lock();
-	delete m_instrument;
-	m_instrument = Instrument::instantiate(_plugin_name, this,
-					key, keyFromDnd);
-	unlock();
+	{
+		const std::lock_guard<Track> guard(*this);
+		std::unique_ptr<Instrument> replacement(Instrument::instantiate(_plugin_name, this, key, keyFromDnd));
+		delete m_instrument;
+		m_instrument = replacement.release();
+	}
 	setName(m_instrument->displayName());
 
 	emit instrumentChanged();

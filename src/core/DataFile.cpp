@@ -190,7 +190,11 @@ DataFile::DataFile( Type type ) :
 
 
 
-DataFile::DataFile( const QString & _fileName ) :
+DataFile::DataFile(const QString& fileName) : DataFile(fileName, true)
+{
+}
+
+DataFile::DataFile(const QString& _fileName, bool showErrors) :
 	QDomDocument(),
 	m_fileName(_fileName),
 	m_content(),
@@ -206,7 +210,7 @@ DataFile::DataFile( const QString & _fileName ) :
 		{
 			m_lastLoadError += QStringLiteral(" Related files: %1.").arg(artifacts.join(QStringLiteral(", ")));
 		}
-		if (gui::getGUI() != nullptr)
+		if (showErrors && gui::getGUI() != nullptr)
 		{
 			QMessageBox::critical( nullptr,
 				gui::SongEditor::tr( "Could not open file" ),
@@ -229,7 +233,7 @@ DataFile::DataFile( const QString & _fileName ) :
 		return;
 	}
 
-	loadData( inFile.read(kMaxProjectBytes + 1), _fileName );
+	loadData(inFile.read(kMaxProjectBytes + 1), _fileName, showErrors);
 }
 
 
@@ -2194,7 +2198,7 @@ bool DataFile::acceptLoadedDocument(const QString& sourceFile)
 	return true;
 }
 
-void DataFile::loadData( const QByteArray & _data, const QString & _sourceFile )
+void DataFile::loadData(const QByteArray& _data, const QString& _sourceFile, bool showErrors)
 {
 	if (_data.size() > kMaxProjectBytes)
 	{
@@ -2211,7 +2215,7 @@ void DataFile::loadData( const QByteArray & _data, const QString & _sourceFile )
 		clear();
 		m_head = QDomElement();
 		m_content = QDomElement();
-		if (xmlDialog && gui::getGUI() != nullptr)
+		if (xmlDialog && showErrors && gui::getGUI() != nullptr)
 		{
 			QMessageBox::critical(nullptr, gui::SongEditor::tr("Error in file"),
 				gui::SongEditor::tr("The file %1 seems to contain errors and therefore can't be loaded.").arg(_sourceFile));

@@ -247,6 +247,7 @@ void SampleTrackView::assignMixerLine(int channelIndex)
 
 void SampleTrackView::corruptStateUpdate()
 {
+	if (!model()) { return; }
 	if (model()->audioBusHandle()->isCorrupted())
 	{
 		m_activityIndicator->setState(FadeButton::State::Corrupted);

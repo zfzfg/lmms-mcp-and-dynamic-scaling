@@ -80,10 +80,12 @@ TrackView::TrackView(Track* track, TrackContainerView* tcv)
 
 
 	connect( m_track, SIGNAL(destroyedTrack()), this, SLOT(close()));
-	connect( m_track,
-		SIGNAL(clipAdded(lmms::Clip*)),
-			this, SLOT(createClipView(lmms::Clip*)),
-			Qt::QueuedConnection );
+	connect(m_track, &Track::clipAdded, this, [this](Clip* clip) {
+		const QPointer<Clip> guardedClip(clip);
+		QMetaObject::invokeMethod(this, [this, guardedClip] {
+			if (guardedClip && model()) { createClipView(guardedClip); }
+		}, Qt::QueuedConnection);
+	}, Qt::DirectConnection);
 
 	connect( &m_track->m_mutedModel, SIGNAL(dataChanged()),
 			&m_trackContentWidget, SLOT(update()));
