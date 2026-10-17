@@ -815,6 +815,8 @@ void AutomationClip::loadSettings( const QDomElement & _this )
 		}
 		if( element.tagName() == "time" )
 		{
+			// Editor insertion clamps to 0. Files can still contain a negative pos;
+			// the piano-roll index treats that as a real curve start.
 			int timeMapPos = element.attribute("pos").toInt();
 			float timeMapInValue = LocaleHelper::toFloat(element.attribute("value"));
 			float timeMapOutValue = LocaleHelper::toFloat(element.attribute("outValue"));

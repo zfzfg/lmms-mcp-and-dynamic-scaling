@@ -38,8 +38,11 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QTextStream>
-#include <QUuid>
 #include <QtEndian>
+
+#include "BundleTransaction.h"
+#include "ProjectCodec.h"
+#include "SaveTransaction.h"
 
 #include "base64.h"
 #include "ConfigManager.h"
@@ -79,13 +82,6 @@ FilePublishResult publishFailure(QString code, QString path, QString message)
 	return result;
 }
 
-bool removeStagingTree(const QString& path)
-{
-	QDir dir(path);
-	if (!dir.exists()) { return true; }
-	return dir.removeRecursively();
-}
-
 int countDomNodes(const QDomNode& node, int limit)
 {
 	int count = 0;
@@ -96,45 +92,6 @@ int countDomNodes(const QDomNode& node, int limit)
 		if (count > limit) { return count; }
 	}
 	return count;
-}
-
-QByteArray boundedUncompress(const QByteArray& compressed, QString* error)
-{
-	if (compressed.size() < 4)
-	{
-		if (error) { *error = QStringLiteral("Compressed project data is incomplete."); }
-		return {};
-	}
-	const auto declared = qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(compressed.constData()));
-	if (declared > static_cast<quint32>(kMaxDecodedBytes))
-	{
-		if (error)
-		{
-			*error = QStringLiteral("Declared uncompressed size %1 exceeds the %2 byte limit. The project was not unpacked.")
-				.arg(declared)
-				.arg(kMaxDecodedBytes);
-		}
-		return {};
-	}
-	const QByteArray decoded = qUncompress(compressed);
-	if (decoded.size() > kMaxDecodedBytes)
-	{
-		if (error) { *error = QStringLiteral("Uncompressed project data exceeds the size limit."); }
-		return {};
-	}
-	return decoded;
-}
-
-void removeAbandonedBundleStaging(const QString& parentPath)
-{
-	QDir parent(parentPath);
-	const auto entries = parent.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-	for (const auto& entry : entries)
-	{
-		if (!entry.fileName().contains(QStringLiteral(".staging-"))) { continue; }
-		if (!QFileInfo::exists(entry.filePath() + QStringLiteral("/.lmms-bundle-staging"))) { continue; }
-		removeStagingTree(entry.filePath());
-	}
 }
 
 } // namespace
@@ -406,104 +363,49 @@ void DataFile::write( QTextStream & _strm )
 
 QStringList DataFile::existingSaveArtifacts(const QString& finalPath)
 {
-	QStringList artifacts;
-	const QString backup = finalPath + QStringLiteral(".bak");
-	const QString transient = finalPath + QStringLiteral(".new");
-	if (QFileInfo::exists(backup)) { artifacts.append(backup); }
-	if (QFileInfo::exists(transient)) { artifacts.append(transient); }
-	return artifacts;
+	return SaveTransaction::listArtifacts(finalPath);
 }
 
 FilePublishResult DataFile::writeAtomic(const QString& finalPath, bool createBackup)
 {
-	const QString backupPath = finalPath + QStringLiteral(".bak");
-	const QString incomingPath = finalPath + QStringLiteral(".bak.incoming");
-	const QString previousPath = finalPath + QStringLiteral(".bak.previous");
-	if (createBackup && QFileInfo::exists(finalPath))
-	{
-		const QFileInfo existingBackup(backupPath);
-		if (existingBackup.exists() && !existingBackup.isFile())
+	const auto published = SaveTransaction::publish(finalPath, createBackup, [this, finalPath](QSaveFile& outfile, QString* error) {
+		const QString extension = finalPath.section('.', -1);
+		if (extension == QLatin1String("mmpz") || extension == QLatin1String("xptz"))
 		{
-			return publishFailure(QStringLiteral("save.backup"), finalPath,
-				QStringLiteral("Could not replace the backup %1. The project file was left unchanged.").arg(backupPath));
-		}
-		QFile::remove(incomingPath);
-		if (!QFile::copy(finalPath, incomingPath))
-		{
-			return publishFailure(QStringLiteral("save.backup"), finalPath,
-				QStringLiteral("Could not create the backup %1. The project file was left unchanged.").arg(backupPath));
-		}
-		if (existingBackup.exists())
-		{
-			QFile::remove(previousPath);
-			if (!QFile::rename(backupPath, previousPath))
+			QString xml;
+			QTextStream ts(&xml);
+			write(ts);
+			ts.flush();
+			if (ts.status() != QTextStream::Ok)
 			{
-				QFile::remove(incomingPath);
-				return publishFailure(QStringLiteral("save.backup"), finalPath,
-					QStringLiteral("Could not replace the backup %1. The project file was left unchanged.").arg(backupPath));
+				if (error) { *error = QStringLiteral("Could not serialize %1.").arg(finalPath); }
+				return false;
 			}
+			const QByteArray compressed = qCompress(xml.toUtf8());
+			if (outfile.write(compressed) != compressed.size())
+			{
+				if (error) { *error = QStringLiteral("Writing %1 failed (%2).").arg(finalPath, outfile.errorString()); }
+				return false;
+			}
+			return true;
 		}
-		if (!QFile::rename(incomingPath, backupPath))
-		{
-			if (QFileInfo::exists(previousPath)) { QFile::rename(previousPath, backupPath); }
-			QFile::remove(incomingPath);
-			return publishFailure(QStringLiteral("save.backup"), finalPath,
-				QStringLiteral("Could not create the backup %1. The project file was left unchanged.").arg(backupPath));
-		}
-		QFile::remove(previousPath);
-	}
-
-	// QSaveFile publishes by renaming onto finalPath. Direct-write fallback stays off so a failed
-	// commit cannot truncate the last good file.
-	QSaveFile outfile(finalPath);
-	outfile.setDirectWriteFallback(false);
-	if (!outfile.open(QIODevice::WriteOnly | QIODevice::Truncate))
-	{
-		return publishFailure(QStringLiteral("save.open"), finalPath,
-			QStringLiteral("Could not open %1 for writing (%2).").arg(finalPath, outfile.errorString()));
-	}
-
-	const QString extension = finalPath.section('.', -1);
-	bool wrote = false;
-	if (extension == QLatin1String("mmpz") || extension == QLatin1String("xptz"))
-	{
-		QString xml;
-		QTextStream ts(&xml);
-		write(ts);
-		ts.flush();
-		if (ts.status() != QTextStream::Ok)
-		{
-			outfile.cancelWriting();
-			return publishFailure(QStringLiteral("save.write"), finalPath,
-				QStringLiteral("Could not serialize %1.").arg(finalPath));
-		}
-		const QByteArray compressed = qCompress(xml.toUtf8());
-		wrote = outfile.write(compressed) == compressed.size();
-	}
-	else
-	{
 		QTextStream ts(&outfile);
 		write(ts);
 		ts.flush();
-		wrote = ts.status() == QTextStream::Ok && outfile.error() == QFileDevice::NoError;
-	}
-
-	if (!wrote)
-	{
-		outfile.cancelWriting();
-		return publishFailure(QStringLiteral("save.write"), finalPath,
-			QStringLiteral("Writing %1 failed (%2).").arg(finalPath, outfile.errorString()));
-	}
-	if (!outfile.commit())
-	{
-		return publishFailure(QStringLiteral("save.commit"), finalPath,
-			QStringLiteral("Could not publish %1 (%2). The previous file, if any, was kept.")
-				.arg(finalPath, outfile.errorString()));
-	}
+		if (ts.status() != QTextStream::Ok || outfile.error() != QFileDevice::NoError)
+		{
+			if (error) { *error = QStringLiteral("Writing %1 failed (%2).").arg(finalPath, outfile.errorString()); }
+			return false;
+		}
+		return true;
+	});
 	FilePublishResult result;
-	result.ok = true;
-	result.code = QStringLiteral("ok");
+	result.ok = published.ok;
+	result.cleanupWarning = published.cleanupWarning;
+	result.code = published.code;
 	result.path = finalPath;
+	result.message = published.message;
+	result.artifacts = published.artifacts;
 	return result;
 }
 
@@ -512,62 +414,40 @@ FilePublishResult DataFile::publishFile(const QString& filename, bool withResour
 	QFileInfo fInfo(filename);
 	if (withResources)
 	{
-		const QString bundleDir = fInfo.path() + "/" + fInfo.fileName().section('.', 0, 0);
-		if (QFileInfo::exists(bundleDir))
+		// completeBaseName keeps every dot except the final suffix, so mix.v1.mmp
+		// and mix.v2.mmp do not share one bundle directory.
+		const QString bundleDir = fInfo.path() + "/" + fInfo.completeBaseName();
+		const QString projectFileName = QFileInfo(nameWithExtension(fInfo.fileName())).fileName();
+		auto clone = cloneDocument();
+		if (!clone || clone->documentElement().isNull())
 		{
-			m_lastPublishResult = publishFailure(QStringLiteral("save.bundle.exists"), bundleDir,
-				QStringLiteral("A bundle folder with that name already exists. Choose a different name. The existing folder was not changed."));
+			m_lastPublishResult = publishFailure(QStringLiteral("save.bundle.clone"), bundleDir,
+				QStringLiteral("Could not clone the project for export. The open project was left unchanged."));
 			return m_lastPublishResult;
 		}
-
-		removeAbandonedBundleStaging(fInfo.path());
-		const QString staging = bundleDir + ".staging-" + QUuid::createUuid().toString(QUuid::Id128);
-		const QString resourcesDir = staging + "/resources";
-		const QString projectPath = nameWithExtension(staging + "/" + fInfo.fileName());
-
-		auto failStaging = [&](QString code, QString message) {
-			removeStagingTree(staging);
-			m_lastPublishResult = publishFailure(std::move(code), bundleDir, std::move(message));
-			return m_lastPublishResult;
-		};
-
-		if (!QDir().mkpath(resourcesDir))
-		{
-			return failStaging(QStringLiteral("save.bundle.stage"),
-				QStringLiteral("Could not create a staging folder for the project bundle."));
-		}
-		QFile marker(staging + "/.lmms-bundle-staging");
-		if (!marker.open(QIODevice::WriteOnly))
-		{
-			return failStaging(QStringLiteral("save.bundle.stage"),
-				QStringLiteral("Could not mark the bundle staging folder."));
-		}
-		marker.close();
-
-		if (!copyResources(resourcesDir))
-		{
-			return failStaging(QStringLiteral("save.bundle.resources"),
-				QStringLiteral("Could not copy every project resource. No bundle was published."));
-		}
-
-		const FilePublishResult written = writeAtomic(projectPath, false);
-		if (!written.ok)
-		{
-			return failStaging(written.code, written.message);
-		}
-		const QFileInfo published(projectPath);
-		if (!published.exists() || published.size() <= 0)
-		{
-			return failStaging(QStringLiteral("save.bundle.verify"),
-				QStringLiteral("The staged project file is missing or empty. No bundle was published."));
-		}
-		marker.remove();
-		if (!QDir().rename(staging, bundleDir))
-		{
-			return failStaging(QStringLiteral("save.bundle.publish"),
-				QStringLiteral("Could not publish the bundle folder %1. The previous project was left unchanged.").arg(bundleDir));
-		}
-		m_lastPublishResult = FilePublishResult{true, bundleDir, QStringLiteral("ok"), QString()};
+		const auto published = BundleTransaction::publish(
+			bundleDir,
+			projectFileName,
+			[&](const QString& resourcesDir, QString* error) {
+				if (!clone->copyResources(resourcesDir))
+				{
+					if (error) { *error = QStringLiteral("Could not copy every project resource. No bundle was published."); }
+					return false;
+				}
+				return clone->verifyBundledReferences(resourcesDir, error);
+			},
+			[&](const QString& projectPath, QString* error) {
+				const FilePublishResult written = clone->writeAtomic(projectPath, false);
+				if (!written.ok && error) { *error = written.message; }
+				return written.ok;
+			});
+		m_lastPublishResult.ok = published.ok;
+		m_lastPublishResult.cleanupWarning = published.cleanupWarning;
+		m_lastPublishResult.code = published.code;
+		m_lastPublishResult.path = published.publishedPath.isEmpty() ? bundleDir : published.publishedPath;
+		m_lastPublishResult.message = published.message;
+		if (!published.backupPath.isEmpty()) { m_lastPublishResult.artifacts.append(published.backupPath); }
+		if (!published.stagingPath.isEmpty()) { m_lastPublishResult.artifacts.append(published.stagingPath); }
 		return m_lastPublishResult;
 	}
 
@@ -579,7 +459,7 @@ FilePublishResult DataFile::publishFile(const QString& filename, bool withResour
 bool DataFile::writeFile(const QString& filename, bool withResources, bool showErrors)
 {
 	const FilePublishResult result = publishFile(filename, withResources);
-	if (!result.ok)
+	if (!result.ok || result.cleanupWarning)
 	{
 		if (showErrors && gui::getGUI() != nullptr)
 		{
@@ -600,6 +480,50 @@ bool DataFile::writeFile(const QString& filename, bool withResources, bool showE
 
 
 
+
+std::unique_ptr<DataFile> DataFile::cloneDocument() const
+{
+	auto clone = std::make_unique<DataFile>(toByteArray(2));
+	clone->m_fileName = m_fileName;
+	clone->m_type = m_type;
+	return clone;
+}
+
+bool DataFile::verifyBundledReferences(const QString& resourcesDir, QString* error) const
+{
+	const QString prefix = PathUtil::basePrefix(PathUtil::Base::LocalDir) + QStringLiteral("resources/");
+	for (auto it = ELEMENTS_WITH_RESOURCES.begin(); it != ELEMENTS_WITH_RESOURCES.end(); ++it)
+	{
+		const QDomNodeList list = elementsByTagName(it->first);
+		for (int i = 0; !list.item(i).isNull(); ++i)
+		{
+			const QDomElement el = list.item(i).toElement();
+			for (auto res = it->second.begin(); res != it->second.end(); ++res)
+			{
+				if (!el.hasAttribute(*res)) { continue; }
+				const QString value = el.attribute(*res);
+				if (!value.startsWith(prefix) || value.contains(QStringLiteral("..")) || value.contains(QLatin1Char('\\')))
+				{
+					if (error) { *error = QStringLiteral("A bundled resource path is outside the bundle: %1.").arg(value); }
+					return false;
+				}
+				const QString fileName = value.mid(prefix.size());
+				if (fileName.isEmpty() || fileName.contains(QLatin1Char('/')))
+				{
+					if (error) { *error = QStringLiteral("A bundled resource path is outside the bundle: %1.").arg(value); }
+					return false;
+				}
+				const QFileInfo copied(resourcesDir + QLatin1Char('/') + fileName);
+				if (!copied.exists() || !copied.isFile() || copied.isSymLink())
+				{
+					if (error) { *error = QStringLiteral("Bundled resource %1 is missing.").arg(fileName); }
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
 
 bool DataFile::copyResources(const QString& resourcesDir)
 {
@@ -2290,47 +2214,75 @@ void DataFile::loadData( const QByteArray & _data, const QString & _sourceFile )
 		return;
 	}
 
-	QString errorMsg;
-	int line = -1, col = -1;
-	if (!lmms::setContent(*this, _data, &errorMsg, &line, &col))
+	auto reject = [&](const QString& message, bool xmlDialog) {
+		m_lastLoadError = message;
+		qWarning().noquote() << m_lastLoadError;
+		clear();
+		m_head = QDomElement();
+		m_content = QDomElement();
+		if (xmlDialog && gui::getGUI() != nullptr)
+		{
+			QMessageBox::critical(nullptr, gui::SongEditor::tr("Error in file"),
+				gui::SongEditor::tr("The file %1 seems to contain errors and therefore can't be loaded.").arg(_sourceFile));
+		}
+	};
+
+	QByteArray xml;
+	if (!ProjectCodec::looksLikeXml(_data) && _data.size() >= 4)
 	{
-		// parsing failed? then try to uncompress data within a declared-size budget
-		QString decodeError;
-		QByteArray uncompressed = boundedUncompress( _data, &decodeError );
-		if( !uncompressed.isEmpty() )
+		const auto declared = qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(_data.constData()));
+		if (declared > static_cast<quint32>(kMaxDecodedBytes))
 		{
-			if (lmms::setContent(*this, uncompressed, &errorMsg, &line, &col))
-			{
-				line = col = -1;
-			}
-		}
-		else if (!decodeError.isEmpty())
-		{
-			m_lastLoadError = decodeError;
-			qWarning().noquote() << m_lastLoadError;
+			reject(QStringLiteral("Declared uncompressed size %1 exceeds the %2 byte limit. The project was not unpacked.")
+				.arg(declared)
+				.arg(kMaxDecodedBytes), false);
 			return;
 		}
-		if( line >= 0 && col >= 0 )
+	}
+
+	const auto kind = ProjectCodec::classify(_data);
+	if (kind == ProjectBytesKind::Xml)
+	{
+		const auto inspected = ProjectCodec::inspectXml(_data);
+		if (inspected.status != ProjectCodecStatus::Ok)
 		{
-			using gui::SongEditor;
-			m_lastLoadError = QStringLiteral("The file %1 could not be parsed (%2 at line %3, column %4).")
-				.arg(_sourceFile, errorMsg)
-				.arg(line)
-				.arg(col);
-
-			qWarning() << "at line" << line << "column" << errorMsg;
-			if (gui::getGUI() != nullptr)
-			{
-				QMessageBox::critical( nullptr,
-					SongEditor::tr( "Error in file" ),
-					SongEditor::tr( "The file %1 seems to contain "
-							"errors and therefore can't be "
-							"loaded." ).
-								arg( _sourceFile ) );
-			}
-
+			reject(inspected.message, inspected.status == ProjectCodecStatus::Xml);
 			return;
 		}
+		xml = _data;
+	}
+	else if (kind == ProjectBytesKind::QtCompressed)
+	{
+		const auto decoded = ProjectCodec::decodeQtCompressed(_data);
+		if (decoded.status != ProjectCodecStatus::Ok)
+		{
+			reject(decoded.message, false);
+			return;
+		}
+		const auto inspected = ProjectCodec::inspectXml(decoded.bytes);
+		if (inspected.status != ProjectCodecStatus::Ok)
+		{
+			reject(inspected.message, inspected.status == ProjectCodecStatus::Xml);
+			return;
+		}
+		xml = decoded.bytes;
+	}
+	else
+	{
+		reject(QStringLiteral("The file %1 is neither LMMS XML nor a compressed LMMS project.").arg(_sourceFile), false);
+		return;
+	}
+
+	QString errorMsg;
+	int line = -1;
+	int col = -1;
+	if (!lmms::setContent(*this, xml, &errorMsg, &line, &col))
+	{
+		reject(QStringLiteral("The file %1 could not be parsed (%2 at line %3, column %4).")
+			.arg(_sourceFile, errorMsg)
+			.arg(line)
+			.arg(col), true);
+		return;
 	}
 
 	if (!acceptLoadedDocument(_sourceFile)) { return; }

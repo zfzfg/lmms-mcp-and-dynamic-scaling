@@ -685,6 +685,11 @@ void Mixer::prepareMasterMix()
 bool Mixer::masterMix( SampleFrame* _buf )
 {
 	const int fpp = Engine::audioEngine()->framesPerPeriod();
+	if (AudioEngineWorkerThread::deadlineReached())
+	{
+		m_cleanupPending = true;
+		return false;
+	}
 
 	// add the channels that have no dependencies (no incoming senders, ie.
 	// no receives) to the jobqueue. The channels that have receives get
@@ -695,6 +700,7 @@ bool Mixer::masterMix( SampleFrame* _buf )
 	// recipients right away.
 	if (!AudioEngineWorkerThread::tryResetJobQueue(AudioEngineWorkerThread::JobQueue::OperationMode::Dynamic))
 	{
+		m_cleanupPending = true;
 		return false;
 	}
 	for( MixerChannel * ch : m_mixerChannels )
@@ -710,6 +716,13 @@ bool Mixer::masterMix( SampleFrame* _buf )
 			ch->m_queued = true;
 			if (!AudioEngineWorkerThread::addJob(ch) && ch->requiresProcessing())
 			{
+				// Do not return while earlier jobs are already in the queue.
+				// The wait below either finishes them or leaves the batch live.
+				if (AudioEngineWorkerThread::deadlineReached())
+				{
+					AudioEngineWorkerThread::noteSkippedInlineJob();
+					break;
+				}
 				ch->queue();
 				ch->process();
 			}
@@ -731,13 +744,18 @@ bool Mixer::masterMix( SampleFrame* _buf )
 		}
 		if( !found )
 		{
-			break;
+			// Master is not Done and nothing is still queued. Do not publish a partial mix.
+			m_cleanupPending = true;
+			++m_incompleteGraphs;
+			return false;
 		}
-		// One timed-out wait leaves the batch live. Calling again would
-		// reuse jobs that are still inside process(). A handful of successful
-		// waits covers dynamic jobs; more than that means the graph is stuck.
-		if (!AudioEngineWorkerThread::startAndWaitForJobs() || ++waits > 8)
+		// One shared deadline covers every dynamic round. A timed-out wait leaves
+		// the batch live, so this does not reset channels or start another batch.
+		if (AudioEngineWorkerThread::deadlineReached()
+			|| !AudioEngineWorkerThread::startAndWaitForJobs()
+			|| ++waits > 8)
 		{
+			m_cleanupPending = true;
 			return false;
 		}
 	}
@@ -770,6 +788,22 @@ bool Mixer::masterMix( SampleFrame* _buf )
 		m_mixerChannels[i]->m_queued = false;
 		m_mixerChannels[i]->m_dependenciesMet = 0;
 	}
+	m_cleanupPending = false;
+	return true;
+}
+
+bool Mixer::cleanupAfterQuiescence()
+{
+	if (!m_cleanupPending) { return true; }
+	if (AudioEngineWorkerThread::batchInFlight()) { return false; }
+	for (int i = 0; i < numChannels(); ++i)
+	{
+		m_mixerChannels[i]->m_buffer.silenceAllChannels();
+		m_mixerChannels[i]->reset();
+		m_mixerChannels[i]->m_queued = false;
+		m_mixerChannels[i]->m_dependenciesMet = 0;
+	}
+	m_cleanupPending = false;
 	return true;
 }
 

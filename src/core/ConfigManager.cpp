@@ -33,17 +33,13 @@
 #include <QMessageBox>
 #include <QUuid>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <signal.h>
-#include <unistd.h>
-#endif
+#include <algorithm>
+
+#include <QDateTime>
 #include <QStandardPaths>
 #include <QTextStream>
+
+#include "RecoveryIdentity.h"
 
 #include "DeprecationHelper.h"
 #include "GuiApplication.h"
@@ -735,70 +731,96 @@ void ConfigManager::publishRecoveryLock()
 		m_recoveryInstanceId = QUuid::createUuid().toString(QUuid::Id128);
 	}
 	QDir().mkpath(m_workingDir);
-	QFile file(recoveryLockFile());
-	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) { return; }
-	file.write(QByteArray::number(QCoreApplication::applicationPid()));
-	file.write("\n");
-	file.write(m_recoveryInstanceId.toUtf8());
-	file.close();
+	auto identity = RecoveryIdentity::currentProcess();
+	identity.uuid = m_recoveryInstanceId;
+	QString error;
+	if (!RecoveryIdentity::writeLockFile(recoveryLockFile(), identity, &error)) { return; }
 	m_recoveryLockPath = recoveryLockFile();
 }
 
-bool ConfigManager::recoveryOwnerAlive(const QString& lockPath)
+namespace
 {
-	QFile file(lockPath);
-	if (!file.open(QIODevice::ReadOnly)) { return false; }
-	bool ok = false;
-	const qint64 pid = QString::fromUtf8(file.readLine().trimmed()).toLongLong(&ok);
-	if (!ok || pid <= 0) { return false; }
-	if (pid == QCoreApplication::applicationPid()) { return true; }
-#ifdef _WIN32
-	HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
-	if (!handle) { return false; }
-	DWORD code = 0;
-	const BOOL queried = GetExitCodeProcess(handle, &code);
-	CloseHandle(handle);
-	return queried && code == STILL_ACTIVE;
-#else
-	return ::kill(static_cast<pid_t>(pid), 0) == 0;
-#endif
+
+ProcessLiveness livenessOfRecovery(const QString& projectPath)
+{
+	QString lockPath = projectPath;
+	lockPath.chop(static_cast<int>(QStringLiteral(".mmp").size()));
+	lockPath += QStringLiteral(".lock");
+	if (!QFileInfo::exists(lockPath)) { return ProcessLiveness::Dead; }
+	const auto lock = RecoveryIdentity::readLockFile(lockPath);
+	if (!lock.parsed) { return ProcessLiveness::Unknown; }
+	return RecoveryIdentity::inspect(lock.identity);
+}
+
+}
+
+QVector<ConfigManager::RecoveryCandidate> ConfigManager::recoveryCandidates() const
+{
+	QVector<RecoveryCandidate> found;
+	auto consider = [&](const QFileInfo& info) {
+		if (!RecoveryIdentity::isDeletableRecoveryFile(info.absoluteFilePath(), m_workingDir)) { return; }
+		if (info.absoluteFilePath() == QFileInfo(recoveryFile()).absoluteFilePath()) { return; }
+		const auto liveness = livenessOfRecovery(info.absoluteFilePath());
+		if (liveness == ProcessLiveness::Alive) { return; }
+		RecoveryCandidate candidate;
+		candidate.path = info.absoluteFilePath();
+		candidate.id = info.fileName() == QStringLiteral("recover.mmp")
+			? QStringLiteral("legacy")
+			: info.completeBaseName().mid(QStringLiteral("recover-").size());
+		candidate.modified = info.lastModified();
+		candidate.bytes = info.size();
+		candidate.liveness = liveness;
+		found.append(candidate);
+	};
+	consider(QFileInfo(m_workingDir + QStringLiteral("recover.mmp")));
+	const auto entries = QDir(m_workingDir).entryInfoList({QStringLiteral("recover-*.mmp")}, QDir::Files);
+	for (const auto& entry : entries) { consider(entry); }
+	std::sort(found.begin(), found.end(), [](const RecoveryCandidate& left, const RecoveryCandidate& right) {
+		if (left.modified != right.modified) { return left.modified > right.modified; }
+		return left.path < right.path;
+	});
+	return found;
 }
 
 QStringList ConfigManager::orphanedRecoveryFiles() const
 {
 	QStringList found;
-	const QString legacy = m_workingDir + QStringLiteral("recover.mmp");
-	if (QFileInfo::exists(legacy)) { found.append(QFileInfo(legacy).absoluteFilePath()); }
-
-	QDir dir(m_workingDir);
-	const auto entries = dir.entryInfoList({QStringLiteral("recover-*.mmp")}, QDir::Files, QDir::Time);
-	const QString ours = QFileInfo(recoveryFile()).absoluteFilePath();
-	for (const auto& entry : entries)
+	for (const auto& candidate : recoveryCandidates())
 	{
-		if (entry.absoluteFilePath() == ours) { continue; }
-		QString lockPath = entry.absoluteFilePath();
-		lockPath.chop(static_cast<int>(QStringLiteral(".mmp").size()));
-		lockPath += QStringLiteral(".lock");
-		if (recoveryOwnerAlive(lockPath)) { continue; }
-		found.append(entry.absoluteFilePath());
+		if (candidate.liveness == ProcessLiveness::Dead) { found.append(candidate.path); }
 	}
 	return found;
 }
 
 bool ConfigManager::discardRecoveryFile(const QString& path)
 {
-	const QFileInfo info(path);
-	if (!info.exists() || !info.isFile()) { return false; }
-	const bool legacy = info.fileName() == QStringLiteral("recover.mmp");
-	const bool ours = info.absoluteFilePath() == QFileInfo(recoveryFile()).absoluteFilePath();
-	QString lockPath = info.absoluteFilePath();
+	if (!RecoveryIdentity::isDeletableRecoveryFile(path, m_workingDir)) { return false; }
+	const QString absolute = QFileInfo(path).absoluteFilePath();
+	const bool ours = absolute == QFileInfo(recoveryFile()).absoluteFilePath();
+	if (!ours && livenessOfRecovery(absolute) != ProcessLiveness::Dead) { return false; }
+	QString lockPath = absolute;
 	lockPath.chop(static_cast<int>(QStringLiteral(".mmp").size()));
 	lockPath += QStringLiteral(".lock");
-	const bool ownerGone = !QFileInfo::exists(lockPath) || !recoveryOwnerAlive(lockPath);
-	if (!legacy && !ours && !ownerGone) { return false; }
-	const bool removed = QFile::remove(info.absoluteFilePath());
-	if (ours || ownerGone) { QFile::remove(lockPath); }
+	const bool removed = QFile::remove(absolute);
+	QFile::remove(lockPath);
+	RecoveryIdentity::releaseClaim(absolute);
 	return removed;
+}
+
+void ConfigManager::retainRecoverySource(const QString& path)
+{
+	m_retainedRecoverySource = path;
+}
+
+void ConfigManager::noteDurableProtectionWritten()
+{
+	if (m_retainedRecoverySource.isEmpty()) { return; }
+	if (QFileInfo(m_retainedRecoverySource).absoluteFilePath() == QFileInfo(recoveryFile()).absoluteFilePath())
+	{
+		m_retainedRecoverySource.clear();
+		return;
+	}
+	if (discardRecoveryFile(m_retainedRecoverySource)) { m_retainedRecoverySource.clear(); }
 }
 
 void ConfigManager::initPortableWorkingDir()

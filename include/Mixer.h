@@ -25,6 +25,8 @@
 #ifndef LMMS_MIXER_H
 #define LMMS_MIXER_H
 
+#include <cstdint>
+
 #include "AudioBuffer.h"
 #include "EffectChain.h"
 #include "JournallingObject.h"
@@ -145,8 +147,13 @@ public:
 	void mixToChannel(const AudioBuffer& buffer, mix_ch_t dest);
 
 	void prepareMasterMix();
-	// False when the worker batch is still live. The output buffer is then unchanged.
+	// False when the worker batch is still live or the graph did not finish.
+	// Channel state is left for cleanupAfterQuiescence(); the output buffer is unchanged.
 	bool masterMix( SampleFrame* _buf );
+	bool cleanupPending() const { return m_cleanupPending; }
+	//! Resets channel buffers and job state once no worker is still inside the batch.
+	bool cleanupAfterQuiescence();
+	std::uint64_t incompleteGraphCount() const { return m_incompleteGraphs; }
 
 	void saveSettings( QDomDocument & _doc, QDomElement & _parent ) override;
 	void loadSettings( const QDomElement & _this ) override;
@@ -218,6 +225,8 @@ public:
 private:
 	// the mixer channels in the mixer. index 0 is always master.
 	std::vector<MixerChannel*> m_mixerChannels;
+	bool m_cleanupPending = false;
+	std::uint64_t m_incompleteGraphs = 0;
 
 	// make sure we have at least num channels
 	void allocateChannelsTo(int num);

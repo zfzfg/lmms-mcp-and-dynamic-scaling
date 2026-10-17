@@ -31,6 +31,19 @@ Object compilation with Qt 5.15.2, the repository headers, and the stub director
 
 An earlier harness named CoreContractTest linked some of those pieces and reported 5 passed. That run is not the current `StabilizationTest`. On this follow-up, `StabilizationTest.cpp` and the changed translation units compiled with MSVC, but the test executable was not linked because the full tree still has no libsndfile. Do not treat the older 5/5 as a run of the current tests.
 
+## Phase 2 minimal tests, same day
+
+`tests/minimal` was configured with Visual Studio 17 2022 and the Qt prefix above. zlib was not a separate library; project decoding used Qt's exported `z_inflate` via `QtZlib/zlib.h`. `ctest -C Release` then passed:
+
+- SaveTransactionTest
+- ProjectCodecTest, including a real `qCompress` round trip
+- BundleTransactionTest
+- RecoveryIdentityTest
+- ReleaseQueueTest
+- WindowsLoaderTest
+
+`StabilizationTest` was not part of that build and was not linked.
+
 ## What was not measured
 
 CPU model, RAM, audio interface, XRuns, paint times, and the F0–F7 listening fixtures were not measured on a running LMMS process. The numbers in section 5 of the plan stay targets.

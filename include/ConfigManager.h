@@ -27,10 +27,14 @@
 
 #include "lmmsconfig.h"
 
+#include <QDateTime>
 #include <QMap>
 #include <QPair>
 #include <QStringList>
 #include <QObject>
+#include <QVector>
+
+#include "RecoveryIdentity.h"
 
 #include <vector>
 #include "lmms_export.h"
@@ -205,11 +209,30 @@ public:
 	QString recoveryFile() const;
 	QString recoveryLockFile() const;
 
-	//! Recovery files whose owning process is no longer alive, plus a legacy `recover.mmp`.
+	struct RecoveryCandidate
+	{
+		QString path;
+		QString id;
+		QDateTime modified;
+		qint64 bytes = 0;
+		ProcessLiveness liveness = ProcessLiveness::Unknown;
+	};
+
+	//! Dead and unknown sessions, newest first. A live owner is omitted.
+	//! Unknown is not proof the owner exited.
+	QVector<RecoveryCandidate> recoveryCandidates() const;
+
+	//! Paths from recoveryCandidates(), kept for callers that only need names.
 	QStringList orphanedRecoveryFiles() const;
 
-	//! Deletes a recovery file only when it belongs to this process or its owner is gone.
+	//! Deletes one validated recovery file. Unknown or live owners are kept.
+	//! This process may delete its own recovery file.
 	bool discardRecoveryFile(const QString& path);
+
+	void retainRecoverySource(const QString& path);
+	const QString& retainedRecoverySource() const { return m_retainedRecoverySource; }
+	//! Drops the retained source only after a newer recovery or a real project save exists.
+	void noteDurableProtectionWritten();
 
 	inline const QStringList & recentlyOpenedProjects() const
 	{
@@ -287,8 +310,6 @@ private:
 	void upgrade_1_2_2();
 	void upgrade();
 	void publishRecoveryLock();
-	static bool recoveryOwnerAlive(const QString& lockPath);
-
 	// List of all upgrade methods
 	static const std::vector<UpgradeMethod> UPGRADE_METHODS;
 
@@ -311,6 +332,7 @@ private:
 	unsigned int m_configVersion;
 	QString m_recoveryInstanceId;
 	QString m_recoveryLockPath;
+	QString m_retainedRecoverySource;
 	QStringList m_recentlyOpenedProjects;
 	QStringList m_favoriteItems;
 

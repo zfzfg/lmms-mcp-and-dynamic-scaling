@@ -1,5 +1,35 @@
 # Findings and fixes
 
+## Phase 2, 17 October 2026
+
+Source changes for `UMSETZUNGSPLAN_FEHLERBEHEBUNG_STABILISIERUNG.md` are in the tree. The table below records only commands that were run. A full LMMS link is still absent: this machine has Qt 5.15.2 and no complete libsndfile/vcpkg tree, so `StabilizationTest` was not linked.
+
+| Package | What changed | Run on 17 October 2026 | Still open |
+| --- | --- | --- | --- |
+| AP-F01 | `cmake/LmmsTestRuntime.cmake` and `tests/runtime/lmms_test_launcher.cpp` prepend the Qt bin directory before the test process starts. CMake stays at 3.13; `ENVIRONMENT_MODIFICATION` is not required. | Without the launcher, minimal tests exited `0xc0000135` or sat on a loader dialog for 60 s. With the launcher, the same tests passed. `WindowsLoaderTest` copied a child without its import DLL and failed in 0.08 s, then passed when the DLL was copied beside it. | Native and offscreen DPI tests were not re-run. No DLL was removed from the Qt installation. |
+| AP-F03 | `SaveTransaction` keeps backup B until project C commits. Rollback restores B. A failed cleanup is success plus the leftover path. | `SaveTransactionTest` 5/5 in `build/phase2-minimal` Release. | Not run inside the full application or with a Windows share-mode lock. |
+| AP-F02 | Bundle publish identifies an LMMS directory, refuses symlinks and foreign folders, and records Prepared / OldMoved / NewPublished. Two renames are not described as atomic. | `BundleTransactionTest` passed: new bundle, foreign folder kept, second publish, failed move leaves the original. | No two-process run and no injected crash between the two renames. |
+| AP-F08 | XML is not passed to the size header. Inflate grows in 64 KiB blocks and stops at the budget. Qt's prefixed zlib (`QtZlib`, `z_inflate`) is used when a separate zlib is absent. | `ProjectCodecTest`: XML line/column, BOM, bad header, declared 1 GiB rejected with peak 0, expansion past a forged small size, checksum, depth and element budgets, `qCompress` round trip. 0 skipped. | No multi-megabyte stock `.mmpz` load in the application. DOM rollback after `Song::clearProject()` is still the open item from the overall plan. |
+| AP-F10 | Lock file version 2 stores pid and start token. Unknown is not dead. The startup dialog lists every candidate; Discard selected deletes one; Escape deletes nothing. The loaded source stays until a later recovery write or a real project save. | `RecoveryIdentityTest` passed, including a live claim that a second claim cannot steal. | The dialog was not clicked. PID reuse was not simulated with a second process. |
+| AP-F11 | Minimal configure is `tests/minimal/CMakeLists.txt`. `StabilizationTest` AI cases are under `LMMS_HAVE_MCP`. The worker test joins its `std::thread` before that thread is destroyed. | Minimal ctest: Save, Codec, Bundle, Recovery, ReleaseQueue, WindowsLoader. | `StabilizationTest` itself was not linked. MCP ON and OFF were not configured as two application trees. |
+| AP-F13 / F09 / F15 | Worker constructors no longer reset the queue. One `AudioEngine` owns it. Destructors join and abort instead of `QThread::terminate()`. `startAndWaitForJobs` uses one absolute deadline; inline time is measured and is not preempted. | Not executed. The decision is in `render-deadline.md`. | No worker-stall run, no child-process hang, no 0/1/N worker measurement. |
+| AP-F07 / F06 | Mixer cleanup waits until `batchInFlight()` is false. Failed periods publish a silence buffer workers do not receive. Export aborts instead of writing that period. | Not executed. | No marked-period audio run. |
+| AP-F05 | Non-note play handles move through a fixed 1024-slot queue. A full queue keeps the pointer on the engine list. | `ReleaseQueueTest` covers the queue and the negative-detune span helper only. | No destructor-thread or shutdown run. |
+| AP-F04 | Empty thumbnails do not dereference a null frame pointer. Revision hashes every frame once when the buffer is built. | Not executed against `SampleThumbnail`. The hash helper's contract is the new `SampleBuffer::contentRevision`. | No painted widget, no ASan. |
+| AP-F12 | `renderNextPeriod` restores the render-thread flag with RAII. `nextAudioBuffer` had no callers in this tree and was removed. | Signal search only. | No thrown-exception render test. |
+| AP-F14 | `AutomationClip::loadSettings` can store a negative node. `NoteTimeIndex::spanBounds` includes that left edge. Paint uses the same helper. New editor nodes still clamp to 0. | `ReleaseQueueTest::negativeDetuneExtendsTheSpanStart` passed. | No project file with a negative node was loaded in the piano roll. |
+| AP-F16 | Docs in this directory updated. | The minimal ctest above. | No package, no 1,000 start/stop cycles, no 8-hour run, no listening pass. |
+
+Command, from `tests/minimal`, generator Visual Studio 17 2022, MSVC 19.44, Qt 5.15.2, CMake 4.4.3, Windows 10.0.26200:
+
+```powershell
+cmake -S tests/minimal -B build/phase2-minimal -DLMMS_QT_MAJOR=5 "-DCMAKE_PREFIX_PATH=C:/tmp/lmms-qt5/5.15.2/msvc2019_64"
+cmake --build build/phase2-minimal --config Release --parallel 2
+ctest --test-dir build/phase2-minimal -C Release --output-on-failure
+```
+
+Last run of that ctest: SaveTransactionTest, ProjectCodecTest, BundleTransactionTest, RecoveryIdentityTest, ReleaseQueueTest, and WindowsLoaderTest passed.
+
 Status after the implementation pass on 17 October 2026. "Compiled" means the translation unit built in the standalone check in `baseline.md`. It is not a full LMMS link.
 
 | ID | Fix | Evidence | Not verified |

@@ -16,6 +16,10 @@ This is not a release approval. The product changes below are in the tree. The g
 - `CMakePresets.json` records the intended Windows reference configure.
 - `cmake/build-manifest.json.in` is written to the build tree at configure time.
 
+## Phase 2 still required
+
+The file contracts in `tests/minimal` passed on 17 October 2026. See `findings.md`. That does not close the gates below. In particular there is still no full link, no MCP ON/OFF pair, no audio stall run, and no 8-hour or listening session.
+
 ## Still required before a release
 
 - [ ] One full Windows link with Qt 5.15.2, vcpkg dependencies from `vcpkg.json`, and `ctest` including `StabilizationTest` and `DpiWidgetTest`

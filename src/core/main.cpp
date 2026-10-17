@@ -36,6 +36,8 @@
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QPushButton>
+
+#include "RecoveryPrompt.h"
 #include <QScreen>
 #include <QTextStream>
 
@@ -866,81 +868,42 @@ int main( int argc, char * * argv )
 		// srandom() calls in their init procedure
 		srand( getpid() + time( 0 ) );
 
-		// recover a file?
-		QStringList orphanedRecovery = ConfigManager::inst()->orphanedRecoveryFiles();
-		QString recoveryFile = orphanedRecovery.isEmpty() ? QString() : orphanedRecovery.first();
-
-		bool recoveryFilePresent = !recoveryFile.isEmpty();
+		const auto recoveryCandidates = ConfigManager::inst()->recoveryCandidates();
+		QString recoveryFile;
+		bool recoveryFilePresent = !recoveryCandidates.isEmpty();
 		bool autoSaveEnabled =
 			ConfigManager::inst()->value( "ui", "enableautosave" ).toInt();
 		if( recoveryFilePresent )
 		{
-			QMessageBox mb;
-			mb.setWindowTitle( MainWindow::tr( "Project recovery" ) );
-			mb.setText( QString(
-				"<html>"
-				"<p style=\"margin-left:6\">%1</p>"
-				"<table cellpadding=\"3\">"
-				"  <tr>"
-				"    <td><b>%2</b></td>"
-				"    <td>%3</td>"
-				"  </tr>"
-				"  <tr>"
-				"    <td><b>%4</b></td>"
-				"    <td>%5</td>"
-				"  </tr>"
-				"</table>"
-				"</html>" ).arg(
-				MainWindow::tr( "There is a recovery file present. "
-					"It looks like the last session did not end "
-					"properly or another instance of LMMS is "
-					"already running. Do you want to recover the "
-					"project of this session?" ),
-				MainWindow::tr( "Recover" ),
-				MainWindow::tr( "Recover the file. Please don't run "
-					"multiple instances of LMMS when you do this." ),
-				MainWindow::tr( "Discard" ),
-				MainWindow::tr( "Launch a default session and delete "
-					"the restored files. This is not reversible." )
-							) );
-
-			mb.setIcon( QMessageBox::Warning );
-			mb.setWindowIcon( embed::getIconPixmap( "icon_small" ) );
-			mb.setWindowFlags( Qt::WindowCloseButtonHint );
-
-			// setting all buttons to the same roles allows us
-			// to have a custom layout
-			auto discard = mb.addButton(MainWindow::tr("Discard"), QMessageBox::AcceptRole);
-			auto recover = mb.addButton(MainWindow::tr("Recover"), QMessageBox::AcceptRole);
-
-			// have a hidden exit button
-			auto exit = mb.addButton("", QMessageBox::RejectRole);
-			exit->setVisible(false);
-
-			// set icons
-			recover->setIcon( embed::getIconPixmap( "recover" ) );
-			discard->setIcon( embed::getIconPixmap( "discard" ) );
-
-			mb.setDefaultButton( recover );
-			mb.setEscapeButton( exit );
-
-			mb.exec();
-			if( mb.clickedButton() == discard )
+			const auto choice = promptRecovery(recoveryCandidates);
+			if (choice.choice == RecoveryChoice::DiscardOne)
 			{
-				for (const auto& orphan : orphanedRecovery)
+				ConfigManager::inst()->discardRecoveryFile(choice.path);
+			}
+			else if (choice.choice == RecoveryChoice::DiscardAll)
+			{
+				for (const auto& candidate : recoveryCandidates)
 				{
-					ConfigManager::inst()->discardRecoveryFile(orphan);
+					if (candidate.liveness == ProcessLiveness::Dead)
+					{
+						ConfigManager::inst()->discardRecoveryFile(candidate.path);
+					}
 				}
-				getGUI()->mainWindow()->sessionCleanup();
 			}
-			else if( mb.clickedButton() == recover ) // Recover
+			else if (choice.choice == RecoveryChoice::Restore)
 			{
-				fileToLoad = recoveryFile;
-				getGUI()->mainWindow()->setSession( MainWindow::SessionState::Recover );
-			}
-			else // Exit
-			{
-				return EXIT_SUCCESS;
+				QString claimError;
+				const auto claimer = RecoveryIdentity::currentProcess();
+				if (!RecoveryIdentity::tryClaim(choice.path, claimer, &claimError))
+				{
+					QMessageBox::warning(nullptr, MainWindow::tr("Project recovery"), claimError);
+				}
+				else
+				{
+					recoveryFile = choice.path;
+					fileToLoad = recoveryFile;
+					getGUI()->mainWindow()->setSession( MainWindow::SessionState::Recover );
+				}
 			}
 		}
 
@@ -967,7 +930,18 @@ int main( int argc, char * * argv )
 				Engine::getSong()->createNewProjectFromTemplate( fileToLoad );
 				if (Engine::getSong()->lastLoadError().isEmpty())
 				{
-					ConfigManager::inst()->discardRecoveryFile(recoveryFile);
+					// Keep the source until this process has written its own
+					// recovery file or the user saves. A crash before that
+					// must still find the session that was just loaded.
+					ConfigManager::inst()->retainRecoverySource(recoveryFile);
+					if (autoSaveEnabled)
+					{
+						Engine::getSong()->saveProjectFile(ConfigManager::inst()->recoveryFile());
+					}
+				}
+				else
+				{
+					RecoveryIdentity::releaseClaim(recoveryFile);
 				}
 			}
 			else

@@ -27,6 +27,7 @@ SET(LMMS_SRCS
 	gui/Lv2ViewBase.cpp
 	gui/MainApplication.cpp
 	gui/MainWindow.cpp
+	gui/RecoveryPrompt.cpp
 	gui/MicrotunerConfig.cpp
 	gui/MidiCCRackView.cpp
 	gui/MidiSetupWidget.cpp

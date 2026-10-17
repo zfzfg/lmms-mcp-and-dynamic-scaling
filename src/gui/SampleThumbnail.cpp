@@ -37,16 +37,6 @@
 
 namespace {
 	constexpr auto AggregationPerZoomStep = 10;
-
-	quint64 mixSampleBits(quint64 hash, float value)
-	{
-		uint32_t encoded = 0;
-		std::memcpy(&encoded, &value, sizeof(encoded));
-		hash ^= encoded;
-		hash *= 1099511628211ull;
-		return hash;
-	}
-
 }
 
 namespace lmms::gui {
@@ -132,8 +122,14 @@ SampleThumbnail::SampleThumbnail(const Sample& sample)
 		s_sampleThumbnailCacheMap.emplace(std::move(entry), CacheRecord{m_thumbnailCache, 0, ++s_cacheTick});
 	}
 
-	const auto flatBuffer = m_buffer->data()->data();
-	const auto flatBufferSize = m_buffer->size() * DEFAULT_CHANNELS;
+	// Float count is frame count times channel count. Empty storage has no pointer to dereference.
+	const float* flatBuffer = nullptr;
+	auto flatBufferSize = std::size_t{0};
+	if (!m_buffer->empty() && m_buffer->data() != nullptr)
+	{
+		flatBuffer = m_buffer->data()->data();
+		flatBufferSize = m_buffer->size() * DEFAULT_CHANNELS;
+	}
 	m_thumbnailCache->emplace_back(flatBuffer, flatBufferSize, flatBufferSize / AggregationPerZoomStep);
 
 	while (m_thumbnailCache->back().width() >= AggregationPerZoomStep)
@@ -236,17 +232,7 @@ auto SampleThumbnail::columnSpan(size_t sourceWidth, int column, int targetWidth
 
 auto SampleThumbnail::contentRevisionOf(const SampleBuffer& buffer) -> quint64
 {
-	if (buffer.empty() || buffer.data() == nullptr) { return 0; }
-	auto hash = 1469598103934665603ull ^ static_cast<quint64>(buffer.size());
-	const auto stride = std::max<size_t>(1, buffer.size() / 64);
-	for (size_t index = 0; index < buffer.size(); index += stride)
-	{
-		hash = mixSampleBits(hash, buffer.data()[index].left());
-		hash = mixSampleBits(hash, buffer.data()[index].right());
-	}
-	hash = mixSampleBits(hash, buffer.data()[buffer.size() - 1].left());
-	hash = mixSampleBits(hash, buffer.data()[buffer.size() - 1].right());
-	return hash;
+	return buffer.contentRevision();
 }
 
 auto SampleThumbnail::chooseSource(size_t frameCount, size_t finestPeakWidth, int targetWidth) -> SourceChoice

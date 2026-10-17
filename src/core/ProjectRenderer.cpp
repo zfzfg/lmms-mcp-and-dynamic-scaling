@@ -168,6 +168,12 @@ void ProjectRenderer::run()
 	while (!Engine::getSong()->isExportDone() && !m_abort)
 	{
 		const auto buffer = Engine::audioEngine()->renderNextPeriod();
+		if (Engine::audioEngine()->lastPeriodFailed())
+		{
+			// A stall must not become a successful file with a hole of silence.
+			m_abort = true;
+			break;
+		}
 		m_fileDev->writeBuffer(buffer.data(), buffer.size());
 
 		const int nprog = Engine::getSong()->getExportProgress();

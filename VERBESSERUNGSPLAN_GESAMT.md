@@ -1031,9 +1031,9 @@ Bereits vorhandene DPI- und MCP-Verträge wurden nicht zurückgebaut. Der isolie
 
 Die verlinkten Qt-Seiten beschreiben allgemeine Verträge. Verfügbarkeit und Verhalten konkreter APIs werden bei der Implementierung zusätzlich gegen die tatsächlich unterstützten Qt-5-/Qt-6-Versionen geprüft. Dieser Plan empfiehlt kein ungeprüftes Upgrade auf eine neuere Bibliotheksversion.
 
-### 12.3 Vorgeschlagene spätere Ablage
+### 12.3 Nachweisablage
 
-Nachweise der Umsetzung können in einem neuen Verzeichnis doc/stabilization/ gesammelt werden:
+Die Dateien unter `doc/stabilization/` existieren. Ältere Fassungen dieses Plans haben sie als noch nicht angelegt beschrieben. Neue Messungen werden dort ergänzt und ersetzen keine offenen Hardware- oder Langlauftore:
 
 | Datei / Bereich | Inhalt |
 | --- | --- |
@@ -1043,4 +1043,4 @@ Nachweise der Umsetzung können in einem neuen Verzeichnis doc/stabilization/ ge
 | manual-acceptance.md | Reale DPI-, Audio-, Plugin- und Paketabnahme |
 | release-gates.md | Ausgeführte Prüfungen, offene Abweichungen und Freigabeentscheidung |
 
-Diese Nachweisdateien sind vorgeschlagene Folgeartefakte und wurden durch die vorliegende Analyse nicht bereits erstellt.
+Die Dateien sind die Ablage. Ein Eintrag dort ist nur dann eine Abnahme, wenn er Befehl, Ergebnis und die nicht ausgeführten Läufe nennt.

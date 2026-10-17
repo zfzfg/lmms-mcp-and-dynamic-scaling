@@ -19,6 +19,10 @@ set(LMMS_SRCS
 	core/Controller.cpp
 	core/ControllerConnection.cpp
 	core/DataFile.cpp
+	core/SaveTransaction.cpp
+	core/ProjectCodec.cpp
+	core/BundleTransaction.cpp
+	core/RecoveryIdentity.cpp
 	core/DiagnosticReport.cpp
 	core/DrumSynth.cpp
 	core/Effect.cpp

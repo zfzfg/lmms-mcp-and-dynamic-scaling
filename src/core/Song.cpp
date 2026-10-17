@@ -1323,6 +1323,7 @@ bool Song::saveProjectFile(const QString& filename, bool withResources, bool sho
 	m_savingProject = false;
 
 	bool writeStatus = dataFile.writeFile(filename, withResources, showErrors);
+	if (writeStatus) { ConfigManager::inst()->noteDurableProtectionWritten(); }
 
 	// revert to a randomized global seed for Qt
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)

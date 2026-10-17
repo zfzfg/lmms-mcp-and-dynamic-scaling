@@ -166,16 +166,24 @@ namespace
 // Ticks actually drawn for a note. Negative lengths are shown as 4 ticks.
 // Detuning may extend the curve past the note body; zero-length notes stay 0
 // unless a curve is present (paint still skips a zero length).
+void detuneExtents(const Note* note, int* firstKey, int* lastKey)
+{
+	*firstKey = 0;
+	*lastKey = 0;
+	const auto& detuning = note->detuning();
+	if (!detuning || !detuning->hasAutomation()) { return; }
+	const auto& timeMap = detuning->automationClip()->getTimeMap();
+	if (timeMap.isEmpty()) { return; }
+	*firstKey = timeMap.firstKey();
+	*lastKey = timeMap.lastKey();
+}
+
 int drawnNoteTicks(const Note* note)
 {
-	int detuneTicks = 0;
-	const auto& detuning = note->detuning();
-	if (detuning && detuning->hasAutomation())
-	{
-		const auto& timeMap = detuning->automationClip()->getTimeMap();
-		if (!timeMap.isEmpty()) { detuneTicks = timeMap.lastKey(); }
-	}
-	return NoteTimeIndex::drawnTicks(static_cast<int>(note->length()), detuneTicks);
+	int firstKey = 0;
+	int lastKey = 0;
+	detuneExtents(note, &firstKey, &lastKey);
+	return NoteTimeIndex::drawnTicks(static_cast<int>(note->length()), lastKey);
 }
 
 
@@ -195,7 +203,11 @@ unsigned long long noteGeometrySignature(const NoteVector& notes)
 		mix(static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(note)));
 		mix(static_cast<unsigned int>(note->pos().getTicks()));
 		mix(static_cast<unsigned int>(note->length().getTicks()));
-		mix(static_cast<unsigned int>(drawnNoteTicks(note)));
+		int firstKey = 0;
+		int lastKey = 0;
+		detuneExtents(note, &firstKey, &lastKey);
+		mix(static_cast<unsigned int>(firstKey));
+		mix(static_cast<unsigned int>(lastKey));
 	}
 	return sig;
 }
@@ -231,13 +243,14 @@ struct PianoRoll::NoteTimeIndexCache
 		for (int i = 0; i < static_cast<int>(notes.size()); ++i)
 		{
 			const Note* note = notes[i];
-			const int start = note->pos().getTicks();
-			const int drawn = drawnNoteTicks(note);
-			// One extra bar so a curve that runs slightly past the last detune
-			// node, and pixel rounding at the viewport edge, still overlap.
-			const long long end64 = static_cast<long long>(start) + drawn + extra;
-			const int end = static_cast<int>(std::min(
-				end64, static_cast<long long>(std::numeric_limits<int>::max())));
+			int firstKey = 0;
+			int lastKey = 0;
+			detuneExtents(note, &firstKey, &lastKey);
+			int start = 0;
+			int end = 0;
+			// One extra bar so pixel rounding at the viewport edge still overlaps.
+			NoteTimeIndex::spanBounds(note->pos().getTicks(), static_cast<int>(note->length()),
+				firstKey, lastKey, extra, &start, &end);
 			spans.push_back(NoteTimeIndex::Span{start, end, i});
 		}
 		index.rebuild(spans);
@@ -4002,18 +4015,22 @@ void PianoRoll::paintEvent(QPaintEvent * pe )
 			int pos_ticks = note->pos();
 			int note_width = len_ticks * m_ppb / TimePos::ticksPerBar();
 
-			int detuningLength = note->detuning() != nullptr && !note->detuning()->automationClip()->getTimeMap().isEmpty()
-				? note->detuning()->automationClip()->getTimeMap().lastKey() * m_ppb / TimePos::ticksPerBar()
-				: note_width;
-
-			const int x = ( pos_ticks - m_currentPosition ) *
-					m_ppb / TimePos::ticksPerBar();
-			// Skip this note if not in visible area at all
-			// But still draw the note if the detuning curve extends past the end of it.
-			if (!(x + std::max(note_width, detuningLength) >= 0 && x <= width() - m_whiteKeyWidth))
+			int firstKey = 0;
+			int lastKey = 0;
+			detuneExtents(note, &firstKey, &lastKey);
+			int spanStart = 0;
+			int spanEnd = 0;
+			NoteTimeIndex::spanBounds(pos_ticks, len_ticks, firstKey, lastKey, 0, &spanStart, &spanEnd);
+			const int viewportRight = width() - m_whiteKeyWidth;
+			const long long leftPx = static_cast<long long>(spanStart - m_currentPosition) * m_ppb / TimePos::ticksPerBar();
+			const long long rightPx = static_cast<long long>(spanEnd - m_currentPosition) * m_ppb / TimePos::ticksPerBar();
+			// A curve that starts before the note can enter the viewport while the note body is still to the right.
+			if (!(rightPx >= 0 && leftPx <= viewportRight))
 			{
 				return;
 			}
+			const int x = ( pos_ticks - m_currentPosition ) *
+					m_ppb / TimePos::ticksPerBar();
 
 			// is the note in visible area?
 			if (note->key() > bottomKey && note->key() <= topKey)

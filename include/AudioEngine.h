@@ -41,6 +41,7 @@
 #include "AudioDisplayBuffer.h"
 #include "AudioEngineProfiler.h"
 #include "PlayHandle.h"
+#include "PlayHandleReleaseQueue.h"
 
 
 namespace lmms
@@ -275,6 +276,12 @@ public:
 	 */
 	std::span<const SampleFrame> renderNextPeriod();
 
+	//! True when the period just rendered was replaced by silence after a failed batch.
+	bool lastPeriodFailed() const { return m_lastPeriodFailed; }
+
+	//! Deletes play handles whose affinity matches the caller. Wrong-affinity handles stay owned.
+	void drainDeferredPlayHandles(bool force = false);
+
 	/**
 	 * @brief Renders an audio buffer into @a dst.
 	 *
@@ -314,7 +321,8 @@ public:
 signals:
 	void qualitySettingsChanged();
 	void sampleRateChanged();
-	void nextAudioBuffer(const lmms::SampleFrame* buffer);
+	// nextAudioBuffer was removed. Repository search found no connections,
+	// string-based slots, or plugin listeners. Display data is a copied snapshot.
 
 
 private:
@@ -324,6 +332,9 @@ private:
 		{
 			if (m_outputBufferReadIndex == m_framesPerPeriod) { m_outputBufferReadIndex = 0; }
 			if (m_outputBufferReadIndex == 0) { renderNextPeriod(); }
+			const SampleFrame& rendered = m_lastPeriodFailed
+				? m_silenceBuffer[m_outputBufferReadIndex]
+				: m_outputBufferRead[m_outputBufferReadIndex];
 
 			switch (dst.channels())
 			{
@@ -331,15 +342,15 @@ private:
 				assert(false);
 				break;
 			case 1:
-				dst.sample(0, frame) = m_outputBufferRead[m_outputBufferReadIndex].average();
+				dst.sample(0, frame) = rendered.average();
 				break;
 			case 2:
-				dst.sample(0, frame) = m_outputBufferRead[m_outputBufferReadIndex][0];
-				dst.sample(1, frame) = m_outputBufferRead[m_outputBufferReadIndex][1];
+				dst.sample(0, frame) = rendered[0];
+				dst.sample(1, frame) = rendered[1];
 				break;
 			default:
-				dst.sample(0, frame) = m_outputBufferRead[m_outputBufferReadIndex][0];
-				dst.sample(1, frame) = m_outputBufferRead[m_outputBufferReadIndex][1];
+				dst.sample(0, frame) = rendered[0];
+				dst.sample(1, frame) = rendered[1];
 				for (auto channel = 2; channel < dst.channels(); ++channel)
 				{
 					dst.sample(channel, frame) = 0.f;
@@ -388,7 +399,10 @@ private:
 
 	std::unique_ptr<SampleFrame[]> m_outputBufferRead;
 	std::unique_ptr<SampleFrame[]> m_outputBufferWrite;
+	std::unique_ptr<SampleFrame[]> m_silenceBuffer;
 	f_cnt_t m_outputBufferReadIndex;
+	bool m_renderFailed = false;
+	bool m_lastPeriodFailed = false;
 
 	// worker thread stuff
 	std::vector<AudioEngineWorkerThread *> m_workers;
@@ -400,7 +414,13 @@ private:
 	LocklessList<PlayHandle *> m_newPlayHandles;
 	ConstPlayHandleList m_playHandlesToRemove;
 	std::vector<PlayHandle*> m_deferredDeletes;
+	PlayHandleReleaseQueue m_releaseQueue;
+	static constexpr int kReleaseHoldCapacity = 1024;
+	PlayHandle* m_releaseHold[kReleaseHoldCapacity] = {};
+	int m_releaseHoldCount = 0;
 	AudioDisplayBuffer m_displayBuffer;
+
+	bool retainForRelease(PlayHandle* handle);
 
 	float m_masterGain;
 

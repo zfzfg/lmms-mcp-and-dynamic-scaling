@@ -53,12 +53,26 @@ class AudioEngine;
 //   not delete those jobs or start another batch over them.
 // - startAndWaitForJobs() refuses when a wait is already open or a worker is
 //   still inside run(). Otherwise it bumps the generation, optionally runs
-//   the inline share, then waits only up to the given budget.
+//   the inline share, then waits only until the armed absolute deadline.
+//   The per-call budget is not added again for each mixer round.
+// - Inline process() and a plugin call already inside the caller are not
+//   preempted by that deadline. A timeout ends the wait, not the job.
+// - The queue is initialized once. A worker constructor must not reset it.
 // - addJob() claims an index, then release-stores the job pointer only after
 //   queue(). Consumers acquire that pointer by exchanging the slot to nullptr.
 //   A published non-null pointer is processed exactly once.
 // - Indexes past JOB_QUEUE_SIZE are not queued. The claim is still counted
 //   finished so wait cannot hang, and the job is left unqueued.
+struct RenderWaitAccount
+{
+	std::int64_t inlineNanoseconds = 0;
+	std::int64_t waitNanoseconds = 0;
+	bool ranInline = false;
+	bool skippedInlineBecauseDeadline = false;
+	bool waitBudgetExhausted = false;
+	bool deadlineAlreadyExpired = false;
+};
+
 class AudioEngineWorkerThread : public QThread
 {
 	Q_OBJECT
@@ -121,6 +135,19 @@ public:
 	AudioEngineWorkerThread( AudioEngine * audioEngine );
 	~AudioEngineWorkerThread() override;
 
+	//! One-time queue setup. Safe to call more than once. Does not bump the
+	//! epoch again after the first call, so a new worker cannot invalidate a live batch.
+	static void initializeQueueOnce();
+
+	//! False when another AudioEngine already owns the process-wide queue.
+	static bool tryAcquireEngineOwnership();
+	static void releaseEngineOwnership();
+
+	//! Empty time point clears the deadline. startAndWaitForJobs then uses @p budget
+	//! from the moment it is called, after subtracting inline time.
+	static void armRenderDeadline(std::chrono::steady_clock::time_point deadline);
+	static bool deadlineReached();
+
 	virtual void quit();
 
 	// False while workers are inside run() or the queue still holds unfinished jobs.
@@ -143,6 +170,7 @@ public:
 		{
 			return false;
 		}
+		bool skippedRequiredJob = false;
 		for( const auto & job : items )
 		{
 			// addJob() reserves an index before queue(), and only then
@@ -153,11 +181,21 @@ public:
 			// accepted, or it would be processed twice.
 			if( !addJob( job ) && job->requiresProcessing() )
 			{
-				job->queue();
-				job->process();
+				// Overflow is synchronous on this thread and counts as inline work.
+				// Past the deadline it is not started; the caller must fail the period.
+				if( deadlineReached() )
+				{
+					noteSkippedInlineJob();
+					skippedRequiredJob = true;
+				}
+				else
+				{
+					job->queue();
+					job->process();
+				}
 			}
 		}
-		return true;
+		return !skippedRequiredJob;
 	}
 
 	// A non-positive budget uses two audio periods, clamped to 2..50 ms.
@@ -179,9 +217,21 @@ public:
 
 	static std::uint64_t waitTimeouts();
 	static std::uint64_t busyRefusals();
+	static std::uint64_t deadlineMisses();
+	static std::uint64_t incompleteJobs();
+	static RenderWaitAccount lastWaitAccount();
 
 	// Cumulative number of addJob() calls that did not fit in the queue.
 	static std::uint64_t overflowCount();
+
+	//! Two audio periods, clamped to 2..50 ms. This is a wait budget, not a
+	//! guarantee that inline plugin code returns inside it.
+	static std::chrono::milliseconds renderWaitBudget();
+
+	//! Test isolation. Does nothing while a worker is inside run() or a wait is open.
+	static bool resetProcessStateForTests();
+
+	static void noteSkippedInlineJob();
 
 
 private:
@@ -199,6 +249,11 @@ private:
 	static std::atomic<bool> s_lastWaitTimedOut;
 	static std::atomic<std::uint64_t> s_waitTimeouts;
 	static std::atomic<std::uint64_t> s_busyRefusals;
+	static std::atomic<std::uint64_t> s_deadlineMisses;
+	static std::atomic<std::uint64_t> s_incompleteJobs;
+	static RenderWaitAccount s_lastWaitAccount;
+	static std::chrono::steady_clock::time_point s_deadline;
+	static std::atomic<int> s_engineOwners;
 	static QList<AudioEngineWorkerThread *> workerThreads;
 
 	std::atomic<bool> m_stop;

@@ -27,6 +27,7 @@
 #define LMMS_DATA_FILE_H
 
 #include <map>
+#include <memory>
 #include <QDomDocument>
 #include <QStringList>
 #include <vector>
@@ -45,9 +46,12 @@ class ProjectVersion;
 struct LMMS_EXPORT FilePublishResult
 {
 	bool ok = false;
+	//! The project or bundle was published, but a previous generation could not be removed.
+	bool cleanupWarning = false;
 	QString path;
 	QString code;
 	QString message;
+	QStringList artifacts;
 };
 
 
@@ -87,7 +91,7 @@ public:
 	const FilePublishResult& lastPublishResult() const { return m_lastPublishResult; }
 	const QString& lastLoadError() const { return m_lastLoadError; }
 
-	//! Paths of leftover `.new` / `.bak` files next to @p finalPath, when they exist.
+	//! Leftover backup and transaction files next to @p finalPath.
 	static QStringList existingSaveArtifacts(const QString& finalPath);
 
 	//! @brief Copies resources to @p resourcesDir and changes the
@@ -192,6 +196,9 @@ private:
 	void loadData( const QByteArray & _data, const QString & _sourceFile );
 	bool acceptLoadedDocument(const QString& sourceFile);
 	FilePublishResult writeAtomic(const QString& finalPath, bool createBackup);
+	//! Parsed copy used by bundle export so a failed copy cannot retarget this document.
+	std::unique_ptr<DataFile> cloneDocument() const;
+	bool verifyBundledReferences(const QString& resourcesDir, QString* error) const;
 
 	QString m_fileName; //!< The origin file name or "" if this DataFile didn't originate from a file
 	QDomElement m_content;

@@ -80,6 +80,8 @@ public:
 	auto data() const -> const SampleFrame* { return m_data.data(); }
 	auto size() const -> size_type { return m_data.size(); }
 	auto empty() const -> bool { return m_data.empty(); }
+	//! Hash of every frame, computed once. SampleBuffer storage is not mutated after construction.
+	auto contentRevision() const -> quint64 { return m_contentRevision; }
 
 	static auto emptyBuffer() -> std::shared_ptr<const SampleBuffer>;
 
@@ -91,6 +93,7 @@ private:
 	std::vector<SampleFrame> m_data;
 	QString m_audioFile;
 	sample_rate_t m_sampleRate = Engine::audioEngine()->outputSampleRate();
+	quint64 m_contentRevision = 0;
 };
 
 } // namespace lmms

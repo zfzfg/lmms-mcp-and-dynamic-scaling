@@ -25,6 +25,7 @@
 #include "AudioEngine.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 
 #include <QDebug>
@@ -112,8 +113,16 @@ AudioEngine::AudioEngine(bool renderOnly)
 	BufferManager::init( m_framesPerPeriod );
 	m_outputBufferRead = std::make_unique<SampleFrame[]>(m_framesPerPeriod);
 	m_outputBufferWrite = std::make_unique<SampleFrame[]>(m_framesPerPeriod);
+	m_silenceBuffer = std::make_unique<SampleFrame[]>(m_framesPerPeriod);
+	zeroSampleFrames(m_silenceBuffer.get(), m_framesPerPeriod);
 	m_deferredDeletes.reserve(256);
 
+	if (!AudioEngineWorkerThread::tryAcquireEngineOwnership())
+	{
+		qCritical("Only one AudioEngine may own the worker queue");
+		std::abort();
+	}
+	AudioEngineWorkerThread::initializeQueueOnce();
 
 	for( int i = 0; i < m_numWorkers+1; ++i )
 	{
@@ -144,8 +153,10 @@ AudioEngine::~AudioEngine()
 			std::abort();
 		}
 	}
+	drainDeferredPlayHandles(true);
 	for (auto* handle : m_deferredDeletes) { delete handle; }
 	m_deferredDeletes.clear();
+	AudioEngineWorkerThread::releaseEngineOwnership();
 
 	delete m_midiClient;
 	delete m_audioDev;
@@ -230,6 +241,7 @@ void AudioEngine::renderStageNoteSetup()
 	// One pass over the active handles instead of a linear search per removal.
 	if (!m_playHandlesToRemove.isEmpty())
 	{
+		ConstPlayHandleList stillPending;
 		for (auto it = m_playHandles.begin(); it != m_playHandles.end();)
 		{
 			if (std::find(m_playHandlesToRemove.begin(), m_playHandlesToRemove.end(), *it) == m_playHandlesToRemove.end())
@@ -237,18 +249,24 @@ void AudioEngine::renderStageNoteSetup()
 				++it;
 				continue;
 			}
-			(*it)->audioBusHandle()->removePlayHandle(*it);
 			if ((*it)->type() == PlayHandle::Type::NotePlayHandle)
 			{
+				(*it)->audioBusHandle()->removePlayHandle(*it);
 				NotePlayHandleManager::release(static_cast<NotePlayHandle*>(*it));
+			}
+			else if (!retainForRelease(*it))
+			{
+				stillPending.push_back(*it);
+				++it;
+				continue;
 			}
 			else
 			{
-				m_deferredDeletes.push_back(*it);
+				(*it)->audioBusHandle()->removePlayHandle(*it);
 			}
 			it = m_playHandles.erase(it);
 		}
-		m_playHandlesToRemove.clear();
+		m_playHandlesToRemove = std::move(stillPending);
 	}
 
 	swapBuffers();
@@ -302,14 +320,19 @@ bool AudioEngine::renderStageEffects()
 		}
 		if( ( *it )->isFinished() )
 		{
-			(*it)->audioBusHandle()->removePlayHandle(*it);
 			if((*it)->type() == PlayHandle::Type::NotePlayHandle)
 			{
+				(*it)->audioBusHandle()->removePlayHandle(*it);
 				NotePlayHandleManager::release(static_cast<NotePlayHandle*>(*it));
+			}
+			else if (!retainForRelease(*it))
+			{
+				++it;
+				continue;
 			}
 			else
 			{
-				m_deferredDeletes.push_back(*it);
+				(*it)->audioBusHandle()->removePlayHandle(*it);
 			}
 			it = m_playHandles.erase(it);
 		}
@@ -343,18 +366,17 @@ bool AudioEngine::renderStageMix()
 	return true;
 }
 
-std::span<const SampleFrame> AudioEngine::finishBlockedPeriod(bool alreadySwapped)
+std::span<const SampleFrame> AudioEngine::finishBlockedPeriod(bool)
 {
+	// Digital silence lives in a buffer workers never receive. The previous
+	// period is left untouched so a late write cannot be zeroed under a worker.
 	m_profiler.noteWorkerStall();
-	if (!alreadySwapped)
-	{
-		zeroSampleFrames(m_outputBufferRead.get(), m_framesPerPeriod);
-	}
-	m_displayBuffer.publish(m_outputBufferRead.get(), m_framesPerPeriod);
-	s_renderingThread = false;
+	m_renderFailed = true;
+	m_lastPeriodFailed = true;
+	m_displayBuffer.publish(m_silenceBuffer.get(), m_framesPerPeriod);
 	m_profiler.finishPeriod(outputSampleRate(), m_framesPerPeriod);
 	m_outputBufferReadIndex = 0;
-	return {m_outputBufferRead.get(), static_cast<size_t>(m_framesPerPeriod)};
+	return {m_silenceBuffer.get(), static_cast<size_t>(m_framesPerPeriod)};
 }
 
 
@@ -366,24 +388,99 @@ std::span<const SampleFrame> AudioEngine::renderNextPeriod()
 	m_profiler.endLockWait();
 
 	m_profiler.startPeriod();
-	s_renderingThread = true;
-
-	if (AudioEngineWorkerThread::batchInFlight())
+	struct RenderingThreadScope
 	{
-		return finishBlockedPeriod(false);
+		bool previous = false;
+		RenderingThreadScope()
+			: previous(s_renderingThread)
+		{
+#ifndef NDEBUG
+			if (previous) { qWarning("renderNextPeriod re-entered on the same thread"); }
+#endif
+			s_renderingThread = true;
+		}
+		~RenderingThreadScope() { s_renderingThread = previous; }
+	} renderingScope;
+
+	try
+	{
+		if (AudioEngineWorkerThread::batchInFlight())
+		{
+			return finishBlockedPeriod(false);
+		}
+		if (m_renderFailed || Engine::mixer()->cleanupPending())
+		{
+			if (!Engine::mixer()->cleanupAfterQuiescence())
+			{
+				return finishBlockedPeriod(false);
+			}
+			zeroSampleFrames(m_outputBufferRead.get(), m_framesPerPeriod);
+			zeroSampleFrames(m_outputBufferWrite.get(), m_framesPerPeriod);
+			m_renderFailed = false;
+		}
+
+		const auto budget = AudioEngineWorkerThread::renderWaitBudget();
+		AudioEngineWorkerThread::armRenderDeadline(std::chrono::steady_clock::now() + budget);
+		renderStageNoteSetup();
+		if (!renderStageInstruments() || !renderStageEffects() || !renderStageMix())
+		{
+			AudioEngineWorkerThread::armRenderDeadline({});
+			return finishBlockedPeriod(true);
+		}
+		AudioEngineWorkerThread::armRenderDeadline({});
+
+		m_lastPeriodFailed = false;
+		m_profiler.finishPeriod(outputSampleRate(), m_framesPerPeriod);
+		m_outputBufferReadIndex = 0;
+		return {m_outputBufferRead.get(), static_cast<size_t>(m_framesPerPeriod)};
 	}
-
-	renderStageNoteSetup();     // STAGE 0: clear old play handles and buffers, setup new play handles
-	if (!renderStageInstruments() || !renderStageEffects() || !renderStageMix())
+	catch (...)
 	{
+		AudioEngineWorkerThread::armRenderDeadline({});
+		qCritical("Audio render threw. This period is silence and the batch stays live until it finishes.");
 		return finishBlockedPeriod(true);
 	}
+}
 
-	s_renderingThread = false;
-	m_profiler.finishPeriod(outputSampleRate(), m_framesPerPeriod);
-	m_outputBufferReadIndex = 0;
+bool AudioEngine::retainForRelease(PlayHandle* handle)
+{
+	if (handle == nullptr) { return true; }
+	if (m_releaseQueue.tryPush(handle)) { return true; }
+	if (m_releaseHoldCount < kReleaseHoldCapacity)
+	{
+		m_releaseHold[m_releaseHoldCount++] = handle;
+		return true;
+	}
+	return false;
+}
 
-	return {m_outputBufferRead.get(), static_cast<size_t>(m_framesPerPeriod)};
+void AudioEngine::drainDeferredPlayHandles(bool force)
+{
+	auto ownsThread = [&](PlayHandle* handle) {
+		return force || !handle->affinityMatters() || handle->affinity() == QThread::currentThread();
+	};
+	PlayHandle* blocked[64];
+	int blockedCount = 0;
+	while (PlayHandle* handle = m_releaseQueue.tryPop())
+	{
+		if (ownsThread(handle)) { delete handle; continue; }
+		if (blockedCount < 64) { blocked[blockedCount++] = handle; }
+		else if (m_releaseHoldCount < kReleaseHoldCapacity) { m_releaseHold[m_releaseHoldCount++] = handle; }
+		else { m_deferredDeletes.push_back(handle); }
+	}
+	for (int index = 0; index < blockedCount; ++index)
+	{
+		if (m_releaseQueue.tryPush(blocked[index])) { continue; }
+		if (m_releaseHoldCount < kReleaseHoldCapacity) { m_releaseHold[m_releaseHoldCount++] = blocked[index]; }
+		else { m_deferredDeletes.push_back(blocked[index]); }
+	}
+	int kept = 0;
+	for (int index = 0; index < m_releaseHoldCount; ++index)
+	{
+		if (ownsThread(m_releaseHold[index])) { delete m_releaseHold[index]; }
+		else { m_releaseHold[kept++] = m_releaseHold[index]; }
+	}
+	m_releaseHoldCount = kept;
 }
 
 void AudioEngine::swapBuffers()
@@ -620,6 +717,7 @@ void AudioEngine::requestChangeInModel()
 {
 	if (s_renderingThread) { return; }
 	m_changeMutex.lock();
+	drainDeferredPlayHandles(false);
 }
 
 void AudioEngine::doneChangeInModel()

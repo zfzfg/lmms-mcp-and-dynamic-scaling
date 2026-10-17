@@ -1,6 +1,6 @@
 # Manual acceptance
 
-These checks need a running, installed LMMS. They were not executed in this implementation pass. Do not mark them done from the offscreen or translation-unit results.
+These checks need a running, installed LMMS. They were not executed in the phase 2 pass on 17 October 2026. The minimal file and loader tests in `findings.md` do not replace them.
 
 ## Display
 

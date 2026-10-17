@@ -40,6 +40,26 @@ public:
 		return std::max(len, detune);
 	}
 
+	//! Inclusive drawn range. A negative detune key, which loadSettings can
+	//! store even though the editor clamps new nodes to 0, pulls the start
+	//! left. The end covers the note body and the rightmost detune key.
+	static void spanBounds(int noteStart, int lengthTicks, int detuneFirstKey, int detuneLastKey,
+		int extra, int* spanStart, int* spanEnd)
+	{
+		const long long length = lengthTicks < 0 ? 4LL : static_cast<long long>(lengthTicks);
+		const long long left = std::min(0LL, static_cast<long long>(detuneFirstKey));
+		const long long right = std::max(length, std::max(0LL, static_cast<long long>(detuneLastKey)));
+		const long long start = static_cast<long long>(noteStart) + left;
+		const long long end = static_cast<long long>(noteStart) + right + static_cast<long long>(extra);
+		auto clampToInt = [](long long value) {
+			if (value > std::numeric_limits<int>::max()) { return std::numeric_limits<int>::max(); }
+			if (value < std::numeric_limits<int>::min()) { return std::numeric_limits<int>::min(); }
+			return static_cast<int>(value);
+		};
+		*spanStart = clampToInt(start);
+		*spanEnd = clampToInt(end);
+	}
+
 	void clear()
 	{
 		m_spans.clear();

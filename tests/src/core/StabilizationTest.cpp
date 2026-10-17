@@ -23,7 +23,10 @@
 #include <QtEndian>
 #include <QtTest>
 
+#include "lmmsconfig.h"
+#ifdef LMMS_HAVE_MCP
 #include "AiJobManager.h"
+#endif
 #include "AudioDisplayBuffer.h"
 #include "AudioEngineProfiler.h"
 #include "AudioEngineWorkerThread.h"
@@ -321,6 +324,17 @@ private slots:
 		QVERIFY(gui::SampleThumbnail::contentRevisionOf(left) != gui::SampleThumbnail::contentRevisionOf(right));
 	}
 
+	void thumbnailRevisionSeesUnsampledStride()
+	{
+		std::vector<SampleFrame> first(256, SampleFrame(0.0f, 0.0f));
+		std::vector<SampleFrame> second = first;
+		first[2] = SampleFrame(0.5f, -0.5f);
+		const SampleBuffer left(std::move(first), 44100);
+		const SampleBuffer right(std::move(second), 44100);
+		QVERIFY(gui::SampleThumbnail::contentRevisionOf(left) != gui::SampleThumbnail::contentRevisionOf(right));
+	}
+
+#ifdef LMMS_HAVE_MCP
 	void artifactFileReadsChunksAndRejectsChanges()
 	{
 		QTemporaryDir dir;
@@ -369,6 +383,7 @@ private slots:
 		QVERIFY(!changed.ok);
 		QCOMPARE(changed.code, QString("modified"));
 	}
+#endif
 
 	void workerBatchStaysLiveUntilProcessReturns()
 	{
@@ -390,12 +405,15 @@ private slots:
 
 		AudioEngineWorkerThread worker(nullptr);
 		worker.start();
-		struct Cleanup
+		std::thread waiter;
+		// Declared after the thread so an early QVERIFY destroys the guard first.
+		// The guard joins before std::thread's destructor runs.
+		struct JoinGuard
 		{
 			AudioEngineWorkerThread* worker = nullptr;
 			std::atomic<bool>* releaseFlag = nullptr;
 			std::thread* waiter = nullptr;
-			~Cleanup()
+			~JoinGuard()
 			{
 				if (releaseFlag) { releaseFlag->store(true); }
 				if (waiter && waiter->joinable()) { waiter->join(); }
@@ -405,7 +423,7 @@ private slots:
 					worker->wait(3000);
 				}
 			}
-		} cleanup{&worker, &release, nullptr};
+		} guard{&worker, &release, &waiter};
 
 		QElapsedTimer aliveTimer;
 		aliveTimer.start();
@@ -420,11 +438,10 @@ private slots:
 
 		std::atomic<bool> firstDone{false};
 		std::atomic<bool> firstOk{true};
-		std::thread waiter([&] {
+		waiter = std::thread([&] {
 			firstOk = AudioEngineWorkerThread::startAndWaitForJobs(std::chrono::milliseconds(40), false);
 			firstDone = true;
 		});
-		cleanup.waiter = &waiter;
 
 		QElapsedTimer enteredTimer;
 		enteredTimer.start();
