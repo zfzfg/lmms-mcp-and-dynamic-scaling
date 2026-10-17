@@ -14,7 +14,7 @@ description: "Configure or diagnose an MCP host connection to LMMS: choose the i
 
 ## Select the intended instance
 
-The user selects a particular connection file published by LMMS. Obtain its path from LMMS's MCP connection dialog or existing host configuration. Do not select an arbitrary file from a directory of running instances.
+The current companion automatically follows the newest reachable session in its configured connection directory, including after LMMS restarts. Confirm the returned instance and project before editing. Use `--connection-directory` with the directory from LMMS or `--pin-instance --connection-file` when the user wants a fixed session. Legacy file arguments also discover newer sessions in the same directory unless pinned.
 
 The file contains an authentication secret. The companion reads it; diagnostic output and examples should contain only the path and redacted information, never `authToken` or the complete file.
 

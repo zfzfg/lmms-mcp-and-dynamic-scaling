@@ -1048,3 +1048,8 @@ Die Dateien unter `doc/stabilization/` existieren. Ältere Fassungen dieses Plan
 | release-gates.md | Ausgeführte Prüfungen, offene Abweichungen und Freigabeentscheidung |
 
 Die Dateien sind die Ablage. Ein Eintrag dort ist nur dann eine Abnahme, wenn er Befehl, Ergebnis und die nicht ausgeführten Läufe nennt.
+
+
+### MCP-Nachtrag 17.10.2026: automatische aktuelle Sitzung
+
+Auf ausdrücklichen Benutzerwunsch folgt der Companion standardmäßig der neuesten erreichbaren Sitzung im Verbindungsordner. Veraltete Dateien werden authentifiziert geprüft und übersprungen; laufende Anfragen bleiben geschützt, Mutationen werden nicht wiederholt. Feste Bindung bleibt mit `--pin-instance` möglich. Oberfläche und Hostkonfiguration verwenden jetzt den Ordner. Implementiert, installiert und mit 34 Companion-Tests, 76 nativen Tests sowie mehreren echten isolierten LMMS-Sitzungen im selben Companion-Prozess geprüft. Details und Grenzen im [Untersuchungsbericht](doc/mcp/connection-incident-2026-10-17.md).

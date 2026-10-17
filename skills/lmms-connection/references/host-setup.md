@@ -14,8 +14,8 @@ The following is a configuration template for hosts supporting `mcpServers`, not
     "lmms": {
       "command": "C:/Program Files/LMMS/lmms-mcp.exe",
       "args": [
-        "--connection-file",
-        "C:/Users/USER/lmms-studio-connection.json"
+        "--connection-directory",
+        "C:/Users/USER/AppData/Roaming/lmms/mcp/connections"
       ]
     }
   }
@@ -30,7 +30,7 @@ For an observer add `--read-only` to the args. Without the CLI connection-file a
 
 LMMS shows its actual endpoint, granted permissions and connection-file path in the MCP connection dialog. The default directory is Qt's application-specific `AppDataLocation/mcp/connections`; do not hard-code an assumed OS folder.
 
-Each running instance publishes its own `inst_<UUID>.json`. Choose the intended file explicitly. If several plausible instances remain and the user has not selected one, ask which project/instance to use rather than choosing the newest file.
+Each running instance publishes its own `inst_<UUID>.json`. The companion selects the newest reachable session by publication time and authenticated reader probe on each domain call. Stale files are skipped. Use `--pin-instance --connection-file <path>` to opt into a fixed session. A busy newest writer never redirects writes to an older project.
 
 LMMS also accepts `--mcp-connection-file` with a new absolute filename at startup. Existing files are not replaced. This is an application-startup option, distinct from the companion's `--connection-file`.
 
@@ -64,7 +64,7 @@ Discovery can work while LMMS is closed. An MCP server appearing in the host, or
 
 The companion contacts LMMS on its first domain request and reauthenticates after disconnects. Native permission changes revoke existing sessions and previews. Use the host's reconnect/restart mechanism when necessary and read status again.
 
-After an LMMS restart the instance ID and token change. Use the newly published file for the intended instance. A companion restart against the same still-running instance can query retained operations.
+After an LMMS restart the instance ID and token change. Automatic mode discovers the new session on the next call, without restarting the companion. Only pinned mode needs a new file. Read project identity and revision again before editing. A companion restart against the same still-running instance can query retained operations.
 
 Resolve a possibly executed mutation using its original operation key before continuing. Read [the recovery contract](../../lmms-ai/references/session-and-transactions.md) for exact retry decisions.
 

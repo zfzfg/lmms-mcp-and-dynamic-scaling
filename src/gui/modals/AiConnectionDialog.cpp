@@ -4,6 +4,7 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QFormLayout>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -116,8 +117,8 @@ void AiConnectionDialog::onCopyConfigClicked()
 	mcpServer["command"] = QCoreApplication::applicationDirPath() + "/lmms-mcp";
 #endif
 	QJsonArray args;
-	args.append("--connection-file");
-	args.append(svc->connectionFilePath());
+	args.append("--connection-directory");
+	args.append(QFileInfo(svc->connectionFilePath()).absolutePath());
 	mcpServer["args"] = args;
 
 	QJsonObject servers;

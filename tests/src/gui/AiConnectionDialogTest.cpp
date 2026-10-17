@@ -51,7 +51,8 @@ private slots:
 		copy->click();
 		const auto config = QJsonDocument::fromJson(QApplication::clipboard()->text().toUtf8()).object();
 		const auto args = config["mcpServers"].toObject()["lmms"].toObject()["args"].toArray();
-		QCOMPARE(args.at(1).toString(), service->connectionFilePath());
+		QCOMPARE(args.at(0).toString(), QString("--connection-directory"));
+		QCOMPARE(args.at(1).toString(), QFileInfo(service->connectionFilePath()).absolutePath());
 		toggle->click();
 		QVERIFY(status().contains("Stopped"));
 		QVERIFY(!copy->isEnabled());

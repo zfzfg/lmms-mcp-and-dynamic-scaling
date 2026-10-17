@@ -36,17 +36,19 @@ export class BridgeClient {
   private nextId = 1;
   private authenticated = false;
   private generation = 0;
+  private selectingGeneration?: number;
   private activeCalls = 0;
   private receiveBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: unknown) => void; timer: NodeJS.Timeout }>();
-  constructor(private source: ConnectionConfig | (() => ConnectionConfig)) { if (typeof source !== "function") this.config = source; }
+  constructor(private source: ConnectionConfig | (() => ConnectionConfig | Promise<ConnectionConfig>),
+    private followLatest = false) { if (typeof source !== "function") this.config = source; }
   public get instanceId(): string { return this.config?.instanceId ?? "unavailable"; }
   public assertInstance(instanceId: string): void {
     if (!this.authenticated || this.config?.instanceId !== instanceId)
       throw bridgeError(ErrorCode.PermissionDenied, "Resource belongs to another instance or connection is not authenticated.");
   }
   public async connect(): Promise<void> {
-    if (this.authenticated) return;
+    if (this.authenticated && !this.followLatest) return;
     if (this.connecting) return this.connecting;
     const connecting = this.open().finally(() => { if (this.connecting === connecting) this.connecting = undefined; });
     this.connecting = connecting;
@@ -54,8 +56,19 @@ export class BridgeClient {
   }
   private async open(): Promise<void> {
     const generation = ++this.generation;
-    this.config = typeof this.source === "function" ? this.source() : this.source;
-    const config = this.config;
+    this.selectingGeneration = generation;
+    const selected = typeof this.source === "function" ? this.source() : this.source;
+    let config: ConnectionConfig;
+    try { config = selected instanceof Promise ? await selected : selected; }
+    finally { if (this.selectingGeneration === generation) this.selectingGeneration = undefined; }
+    if (generation !== this.generation) throw bridgeError(ErrorCode.NotConnected, "Connection attempt cancelled.");
+    if (this.authenticated && this.config?.instanceId === config.instanceId && this.config.endpoint === config.endpoint
+      && this.config.authToken === config.authToken) return;
+    if (this.pending.size) throw bridgeError(ErrorCode.Busy, "The selected LMMS instance changed. Wait for pending requests to finish and read the new project before editing.");
+    const previous = this.socket;
+    this.socket = null; this.authenticated = false;
+    previous?.destroy();
+    this.config = config;
     if (process.platform !== "win32" && !path.isAbsolute(config.endpoint)) throw bridgeError(ErrorCode.ValidationError, "LMMS must publish an absolute socket address.");
     const address = process.platform === "win32" && !config.endpoint.startsWith("\\\\") ? `\\\\.\\pipe\\${config.endpoint}` : config.endpoint;
     this.receiveBuffer = Buffer.alloc(0);
@@ -63,13 +76,15 @@ export class BridgeClient {
     socket.on("data", (chunk: Buffer) => { if (this.socket === socket) this.onData(chunk); });
     socket.on("error", () => {});
     socket.on("close", () => { if (this.socket === socket) this.reset(bridgeError(ErrorCode.NotConnected,
-      "Connection to the selected LMMS instance closed. A pending mutation may have completed; do not replay it automatically. If LMMS restarted, select its new connection file in the MCP host and reconnect.")); });
+      this.followLatest
+        ? "Connection to LMMS closed. The next call will select the newest live instance automatically. A pending mutation may have completed; do not replay it automatically."
+        : "Connection to the selected LMMS instance closed. A pending mutation may have completed; do not replay it automatically. If LMMS restarted, select its new connection file in the MCP host and reconnect."), this.selectingGeneration === this.generation); });
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => { socket.destroy(); reject(bridgeError(ErrorCode.Timeout, "Connection timed out.")); }, 3000);
         socket.once("connect", () => { clearTimeout(timer); resolve(); });
         socket.once("error", error => { clearTimeout(timer); reject(bridgeError(ErrorCode.NotConnected,
-          `Cannot connect to selected LMMS instance ${config.instanceId}: ${error.message}. If LMMS restarted, select its new connection file in the MCP host and reconnect. No other instance is selected automatically.`)); });
+          `Cannot connect to selected LMMS instance ${config.instanceId}: ${error.message}. If LMMS restarted, select its new connection file in the MCP host and reconnect. Automatic discovery will be retried on the next call when enabled.`)); });
         socket.once("close", () => { clearTimeout(timer); reject(bridgeError(ErrorCode.NotConnected, "Connection closed.")); });
       });
       if (generation !== this.generation || this.socket !== socket || socket.destroyed)
@@ -142,8 +157,8 @@ export class BridgeClient {
       } catch { this.close(); return; }
     }
   }
-  private reset(error: Error): void {
-    ++this.generation; this.connecting = undefined;
+  private reset(error: Error, preserveSelection = false): void {
+    if (!preserveSelection) { ++this.generation; this.connecting = undefined; }
     this.authenticated = false; this.socket = null; this.receiveBuffer = Buffer.alloc(0);
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
     this.pending.clear();

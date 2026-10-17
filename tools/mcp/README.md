@@ -2,13 +2,13 @@
 
 The companion exposes 22 tools, five resource templates and a composition prompt over stdio. It uses the official SDK v2 (`@modelcontextprotocol/server` 2.3.1), supporting MCP revisions 2026-07-28 and 2025-11-25. Tool and resource discovery works without a running LMMS process; the selected instance is contacted on the first domain request.
 
-Installed packages include the native `lmms-mcp` launcher, Node 24.19.0, production dependencies and a license/version manifest. They do not require global Node or npm. Select the instance's connection file explicitly; LMMS shows its actual path in the connection dialog. MCP is enabled by default; `--no-mcp` disables it.
+Installed packages include the native `lmms-mcp` launcher, Node 24.19.0, production dependencies and a license/version manifest. They do not require global Node or npm. By default the companion follows the newest reachable instance, checking again on every domain call. Stale files are skipped using authenticated reader probes. LMMS copies the actual connection directory in its host configuration. MCP is enabled by default; `--no-mcp` disables it.
 
 ```json
-{"mcpServers":{"lmms":{"command":"/absolute/path/to/lmms-mcp","args":["--connection-file","/absolute/path/to/inst_UUID.json"]}}}
+{"mcpServers":{"lmms":{"command":"/absolute/path/to/lmms-mcp","args":["--connection-directory","/absolute/path/to/mcp/connections"]}}}
 ```
 
-Use `--read-only` for an observer connection. Only one writer may connect to an instance. Changing native permissions revokes existing connections and previews immediately.
+Use `--pin-instance --connection-file <path>` to bind to one session. Without pinning, legacy file arguments also discover newer sessions in the same directory. With no arguments the platform default directory is used; `LMMS_MCP_CONNECTION_DIRECTORY` overrides it. A disconnected mutation is never replayed. A busy newest writer does not redirect commands to an older project. Use `--read-only` for an observer connection. Only one writer may connect to an instance. Changing native permissions revokes existing connections and previews immediately.
 
 Development (Node 24.19.0 and npm):
 
