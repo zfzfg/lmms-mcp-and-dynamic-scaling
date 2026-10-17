@@ -1,0 +1,3 @@
+interface:
+  display_name: "LMMS Connection"
+  short_description: "Connect an MCP host to the intended LMMS instance"

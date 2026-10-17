@@ -1,0 +1,3 @@
+interface:
+  display_name: "LMMS Troubleshooting"
+  short_description: "Diagnose LMMS MCP connection and operation failures"

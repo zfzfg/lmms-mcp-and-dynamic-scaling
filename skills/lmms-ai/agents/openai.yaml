@@ -1,0 +1,3 @@
+interface:
+  display_name: "LMMS AI"
+  short_description: "Operate LMMS through its MCP tools"
