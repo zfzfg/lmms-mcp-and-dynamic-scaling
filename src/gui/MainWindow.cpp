@@ -27,7 +27,7 @@
 
 #include "lmmsconfig.h"
 #ifdef LMMS_HAVE_MCP
-#include "AiControlStatus.h"
+#include "widgets/AiControlStatus.h"
 #endif
 
 #include <algorithm>
@@ -44,6 +44,7 @@
 #include <QShortcut>
 #include <QSizePolicy>
 #include <QSplitter>
+#include <QStatusBar>
 
 #include "AboutDialog.h"
 #include "AutomationEditor.h"

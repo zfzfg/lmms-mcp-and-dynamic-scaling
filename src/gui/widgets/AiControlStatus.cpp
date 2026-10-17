@@ -4,7 +4,7 @@
 #include <QMouseEvent>
 #include <QTimer>
 
-#include "AiConnectionDialog.h"
+#include "../modals/AiConnectionDialog.h"
 #include "AiControlService.h"
 
 namespace lmms::gui {
