@@ -32,6 +32,11 @@ class RelativePathsTest : public QObject
 {
 	Q_OBJECT
 private slots:
+	void initTestCase()
+	{
+		QDir::addSearchPath("data", QFINDTESTDATA("../../../data"));
+	}
+
 	void PathUtilComparisonTests()
 	{
 		using namespace lmms;

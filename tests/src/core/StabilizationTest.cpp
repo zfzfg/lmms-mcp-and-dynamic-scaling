@@ -118,7 +118,7 @@ private slots:
 
 	void oversizedDeclaredCompressionIsRejected()
 	{
-		QByteArray payload(8, '\0');
+		QByteArray payload = qCompress(QByteArray("<lmms-project/>"));
 		const quint32 declared = 1024u * 1024u * 1024u;
 		qToBigEndian(declared, reinterpret_cast<uchar*>(payload.data()));
 		DataFile file(payload);

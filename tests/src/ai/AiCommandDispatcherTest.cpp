@@ -21,7 +21,8 @@ private slots:
 		Engine::init(true);
 		QVERIFY(lmms::ai::AiControlService::instance()->startService(m_directory.filePath("connection.json")));
 		lmms::ai::AiControlService::instance()->setReady(true);
-		QTRY_VERIFY(lmms::ai::AiControlService::instance()->isReady());
+		QTRY_VERIFY2(lmms::ai::AiControlService::instance()->isReady(),
+			qPrintable(lmms::ai::AiControlService::instance()->lastError()));
 	}
 
 	void cleanupTestCase()

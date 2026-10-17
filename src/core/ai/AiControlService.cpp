@@ -57,10 +57,15 @@ bool restrictConnectionFile(QFileDevice& file)
 	if (SetEntriesInAclW(1, &access, nullptr, &acl) != ERROR_SUCCESS) { return false; }
 	HANDLE reopened = ReOpenFile(reinterpret_cast<HANDLE>(_get_osfhandle(file.handle())), WRITE_DAC | READ_CONTROL,
 		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+	if (reopened == INVALID_HANDLE_VALUE)
+	{
+		qWarning("Cannot reopen MCP connection file to restrict access (Windows error %lu).", GetLastError());
+	}
 	const bool secured = reopened != INVALID_HANDLE_VALUE
 		&& SetSecurityInfo(reopened, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
 			   nullptr, nullptr, acl, nullptr)
 			== ERROR_SUCCESS;
+	if (!secured && reopened != INVALID_HANDLE_VALUE) { qWarning("Cannot restrict MCP connection file access."); }
 	if (reopened != INVALID_HANDLE_VALUE) { CloseHandle(reopened); }
 	LocalFree(acl);
 	return secured;
@@ -257,21 +262,29 @@ bool AiControlService::writeConnectionFile()
 	if (!fi.dir().mkpath(".")) { return false; }
 	QJsonObject object{{"instanceId", m_instanceId}, {"endpoint", m_endpointName}, {"authToken", m_authToken},
 		{"ipcProtocolVersion", "1.0"}, {"bridgeVersion", "1.3.0-alpha"}};
-	QTemporaryFile file(fi.dir().filePath(".lmms-mcp-XXXXXX"));
-	if (!file.open()) { return false; }
-	if (!restrictConnectionFile(file)) { return false; }
-	const auto bytes = QJsonDocument(object).toJson();
-	if (file.write(bytes) != bytes.size() || !file.flush()) { return false; }
-	const QString temporaryName = file.fileName();
-	file.close();
+	QString temporaryName;
+	{
+		QTemporaryFile file(fi.dir().filePath(".lmms-mcp-XXXXXX"));
+		if (!file.open()) { return false; }
+		if (!restrictConnectionFile(file)) { return false; }
+		const auto bytes = QJsonDocument(object).toJson();
+		if (file.write(bytes) != bytes.size() || !file.flush()) { return false; }
+		temporaryName = file.fileName();
+		file.setAutoRemove(false);
+		// QTemporaryFile::close() retains its native handle. Destruction releases
+		// it before publication, so Windows can rename the secured file.
+	}
 	// Publish without replacement even if another process creates the target after our precheck.
 #ifdef Q_OS_WIN
-	return MoveFileW(
+	const bool published = MoveFileW(
 		reinterpret_cast<LPCWSTR>(temporaryName.utf16()), reinterpret_cast<LPCWSTR>(m_connectionFilePath.utf16()));
+	if (!published) { qWarning("Cannot publish MCP connection file (Windows error %lu).", GetLastError()); }
 #else
-	return ::link(QFile::encodeName(temporaryName).constData(), QFile::encodeName(m_connectionFilePath).constData())
+	const bool published = ::link(QFile::encodeName(temporaryName).constData(), QFile::encodeName(m_connectionFilePath).constData())
 		== 0;
 #endif
+	QFile::remove(temporaryName);
+	return published;
 }
 
 void AiControlService::removeConnectionFile()
